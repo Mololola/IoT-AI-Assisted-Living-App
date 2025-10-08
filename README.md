@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Deploy FastAPI on Render
 
 Use this repo as a template to deploy a Python [FastAPI](https://fastapi.tiangolo.com) service on Render.
@@ -25,3 +26,7 @@ Or simply click:
 ## Thanks
 
 Thanks to [Harish](https://harishgarg.com) for the [inspiration to create a FastAPI quickstart for Render](https://twitter.com/harishkgarg/status/1435084018677010434) and for some sample code!
+=======
+# Iot-and-AI-Home-Assistant-
+Final year MEng project 
+>>>>>>> 9fd7aac (Initial commit)
