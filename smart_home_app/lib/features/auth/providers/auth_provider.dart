@@ -36,7 +36,6 @@ class AuthNotifier extends StateNotifier<AuthState> {
     state = state.copyWith(isLoading: true, error: null);
     await Future.delayed(const Duration(milliseconds: 500));
 
-    // Simple validation - accept any email/password combo
     if (email.contains('@') && password.length >= 6) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('is_logged_in', true);
