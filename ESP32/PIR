@@ -1,19 +1,19 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 
-// --- WiFi & MQTT Configuration ---
+// WiFi & MQTT configuration
 const char* ssid = "YOUR_WIFI_SSID";
 const char* password = "YOUR_WIFI_PASSWORD";
-const char* mqtt_server = "IP_ADDRESS_OF_YOUR_RASPBERRY_PI"; // e.g., "192.168.1.50"
+const char* mqtt_server = "IP_ADDRESS_OF_YOUR_RASPBERRY_PI";
 const int mqtt_port = 1883;
 
-// --- MQTT Topic ---
+// MQTT topic
 const char* motionTopic = "smart-home/living-room/motion";
 
-// --- Sensor Pin ---
+// Sensor pin
 const int pirPin = 4; // The GPIO pin the PIR sensor's OUT is connected to
 
-// --- Global State Variable ---
+// Global state valiable 
 int lastMotionState = LOW; // Used to track the sensor's previous state
 
 WiFiClient espClient;
@@ -52,7 +52,7 @@ void reconnect() {
 void setup() {
   Serial.begin(115200);
   
-  // --- Initialize the PIR Sensor Pin ---
+  // Initalise PIR sensor pin
   pinMode(pirPin, INPUT);
   
   setup_wifi();
@@ -65,10 +65,10 @@ void loop() {
   }
   client.loop();
 
-  // --- Read the PIR Sensor ---
+  // Read PIR sensor 
   int currentMotionState = digitalRead(pirPin);
 
-  // --- Check if the state has changed ---
+  // Check is state has changed 
   if (currentMotionState != lastMotionState) {
     
     // State has changed, publish the new state
