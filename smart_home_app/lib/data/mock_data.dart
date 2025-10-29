@@ -70,18 +70,17 @@ final mockSensorsProvider = Provider<List<MockSensor>>((ref) {
 
 // Routines state notifier
 class RoutinesNotifier extends StateNotifier<List<MockRoutine>> {
-  RoutinesNotifier() : super(_initialRoutines);
-
-  static final List<MockRoutine> _initialRoutines = [
-    MockRoutine(
-      id: 1,
-      scope: 'daily',
-      description: 'Turn on lights at sunset',
-      startTime: DateTime.now(),
-      endTime: DateTime.now().add(const Duration(hours: 1)),
-      createdAt: DateTime.now().subtract(const Duration(days: 1)),
-    ),
-  ];
+  RoutinesNotifier()
+    : super([
+        MockRoutine(
+          id: 1,
+          scope: 'daily',
+          description: 'Turn on lights at sunset',
+          startTime: DateTime.now(),
+          endTime: DateTime.now().add(const Duration(hours: 1)),
+          createdAt: DateTime.now().subtract(const Duration(days: 1)),
+        ),
+      ]);
 
   void addRoutine(MockRoutine routine) {
     state = [...state, routine];
