@@ -174,16 +174,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       color: theme.colorScheme.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Demo: Use any email with @ and password 6+ chars',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
+                    child: Text(
+                      'Demo: Use any email with @ and password 6+ chars',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
                   ),
                 ],
