@@ -1,0 +1,16 @@
+/Used to find threshold for 'in' or 'out' of bed 
+
+const int SENSOR_PIN = 4; // The pin you connected the sensor to
+
+void setup() {
+  Serial.begin(115200);
+}
+
+void loop() {
+  int rawValue = analogRead(SENSOR_PIN);
+  
+  Serial.print("Current Sensor Value: ");
+  Serial.println(rawValue);
+  
+  delay(100); // Read the value 10 times per second
+}
