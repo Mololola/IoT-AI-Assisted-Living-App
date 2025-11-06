@@ -1,0 +1,27 @@
+
+const int SENSOR_PIN = 4;
+
+// Replace THRESHOLD with new found calibration value 
+const int THRESHOLD = 2000;
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("Bed Occupancy Sensor - ONLINE");
+}
+
+void loop() {
+  // Read the raw value from the sensor
+  int rawValue = analogRead(SENSOR_PIN);
+
+   // Main Logic 
+  if (rawValue > THRESHOLD) {
+    // If the value is GREATER than the threshold, someone is in bed
+    Serial.println("Status: In bed");
+  } else {
+    // If the value is LESS than or equal to the threshold, the bed is empty
+    Serial.println("Status: Out of bed");
+  }
+
+  // Wait 1 second before checking again
+  delay(1000); 
+}
