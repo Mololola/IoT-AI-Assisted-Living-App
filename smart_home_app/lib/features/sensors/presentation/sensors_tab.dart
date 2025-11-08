@@ -16,6 +16,10 @@ class SensorsTab extends ConsumerWidget {
         return Icons.lightbulb;
       case 'motion':
         return Icons.sensors;
+      case 'door':
+        return Icons.door_front_door;
+      case 'window':
+        return Icons.window;
       default:
         return Icons.device_unknown;
     }
@@ -31,6 +35,9 @@ class SensorsTab extends ConsumerWidget {
         return Colors.amber;
       case 'motion':
         return Colors.purple;
+      case 'door':
+      case 'window':
+        return Colors.green;
       default:
         return Colors.grey;
     }

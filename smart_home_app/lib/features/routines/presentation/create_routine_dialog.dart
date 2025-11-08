@@ -116,6 +116,7 @@ class _CreateRoutineDialogState extends ConsumerState<CreateRoutineDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Scope',
                     prefixIcon: Icon(Icons.category),
+                    border: OutlineInputBorder(),
                   ),
                   items: const [
                     DropdownMenuItem(value: 'daily', child: Text('Daily')),
@@ -136,6 +137,7 @@ class _CreateRoutineDialogState extends ConsumerState<CreateRoutineDialog> {
                     labelText: 'Description',
                     prefixIcon: Icon(Icons.description),
                     hintText: 'E.g., Turn on living room lights',
+                    border: OutlineInputBorder(),
                   ),
                   maxLines: 2,
                   validator: (value) {
@@ -153,6 +155,7 @@ class _CreateRoutineDialogState extends ConsumerState<CreateRoutineDialog> {
                     decoration: const InputDecoration(
                       labelText: 'Start Time',
                       prefixIcon: Icon(Icons.schedule),
+                      border: OutlineInputBorder(),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -178,6 +181,7 @@ class _CreateRoutineDialogState extends ConsumerState<CreateRoutineDialog> {
                     decoration: const InputDecoration(
                       labelText: 'End Time',
                       prefixIcon: Icon(Icons.schedule),
+                      border: OutlineInputBorder(),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
