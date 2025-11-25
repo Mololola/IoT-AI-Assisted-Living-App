@@ -2,29 +2,24 @@
 #include <WiFi.h>      // For Wi-Fi Connectivity
 #include <PubSubClient.h> // For MQTT Protocol
 
-// ------------------------------------
-// 1. CONFIGURATION (*** CRITICAL: UPDATE THESE VALUES ***)
-// ------------------------------------
+// Configuration changed based on WiFi 
 const char* ssid = "Hyperoptic Fibre 7323";            
 const char* password = "UjrjR7Y4C437U4";      
-
-// FIX THIS: Replace with the ACTUAL IP address of your Raspberry Pi (Mosquitto Broker)
 const char* mqtt_server = "192.168.1.108";    
 
 const char* mqtt_client_id = "ESP32_HMMD_MQTT_01"; 
-const char* mqtt_publish_topic = "home/bedroom/presence"; 
+const char* mqtt_publish_topic = "home/bedroom/presence"; //Connection to Raspberry Pi 
 
-// --- SAMPLING RATE FOR AI TRAINING (10Hz) ---
 // We only publish to MQTT if 100ms has passed since the last successful decode.
 const long TARGET_SAMPLE_RATE_MS = 100; 
 long last_sample_time = 0; // Tracks when the last publish occurred
 
-// --- SERIAL PINS (UART1) ---
+// Serial Pins
 #define RX1_PIN 18 // HMMD TX connects to ESP32 RX (Input)
 #define TX1_PIN 19 // HMMD RX connects to ESP32 TX (Output)
 #define HMMD_BAUDRATE 115200 
 
-// --- HMMD Command Data ---
+// HMMD command data 
 // Configuration command to ensure the sensor is streaming data
 String hex_to_send = "FDFCFBFA0800120000006400000004030201"; 
 
@@ -35,24 +30,19 @@ const int PACKET_LENGTH = 14;
 const int DISTANCE_OFFSET = 8; // Assumed offset of the distance field (Must be verified with datasheet!)
 const int DISTANCE_FIELD_LENGTH = 2; 
 
-// ------------------------------------
-// 2. GLOBALS & OBJECTS
-// ------------------------------------
+// Globals and objects 
 HardwareSerial HMMDSerial(1); // Custom serial object for sensor communication (UART1)
 WiFiClient espClient;         
 PubSubClient client(espClient); 
 
 
-// --- Function Prototypes ---
+// Function prototype
 void sendHexData(String hexString);
 void readAndProcessSensorLines();
 void setup_wifi();
 void reconnect();
 
-
-// ------------------------------------
-// 3. WIFI SETUP 
-// ------------------------------------
+// WiFi Setup 
 void setup_wifi() {
     delay(10);
     Serial.print("Connecting to ");
@@ -71,10 +61,7 @@ void setup_wifi() {
     Serial.println(WiFi.localIP());
 }
 
-
-// ------------------------------------
-// 4. MQTT RECONNECTION LOGIC
-// ------------------------------------
+// MQTT Reconnection logic
 void reconnect() {
     while (!client.connected()) {
         Serial.print("Attempting MQTT connection...");
@@ -91,10 +78,7 @@ void reconnect() {
     }
 }
 
-
-// ------------------------------------
-// 5. COMMAND SENDER
-// ------------------------------------
+// Command sender 
 void sendHexData(String hexString) {
     int hexStringLength = hexString.length();
     if (hexStringLength % 2 != 0) return;
@@ -118,10 +102,7 @@ void sendHexData(String hexString) {
     HMMDSerial.write(hexBytes, byteCount); // Send data via HMMDSerial (UART1)
 }
 
-
-// ------------------------------------
-// 6. DECODING & PUBLISHING LOGIC (WITH SAMPLING CONTROL)
-// ------------------------------------
+// Decode and Publishing logic 
 void decodeAndPublishDistance(byte header1, byte header2) {
     byte buffer[PACKET_LENGTH];
     
@@ -146,7 +127,7 @@ void decodeAndPublishDistance(byte header1, byte header2) {
         // 2. CONVERT TO CENTIMETERS (Assumed scaling factor)
         float distance_cm = (float)rawDistance / 10.0; 
         
-        // --- MQTT PUBLISHING ---
+        // MQTT Publishing 
         if (client.connected()) {
             // Convert float distance to a character array for MQTT payload
             char payload[10];
@@ -177,7 +158,7 @@ void readAndProcessSensorLines() {
     // 2. ONLY PROCEED IF NEW DATA IS AVAILABLE AFTER TIMEOUT
     if (HMMDSerial.available() > 0) {
         
-        // --- STEP A: Look for the Start Header (FD FC) ---
+        //  Look for the Start Header (FD FC)
         byte header1 = HMMDSerial.read();
 
         if (header1 == HEADER_1) {
@@ -189,7 +170,7 @@ void readAndProcessSensorLines() {
                     
                     last_sample_time = millis(); // RESET THE SAMPLING TIMER ONLY ON SUCCESSFUL HEADER DECODE
                     
-                    // --- STEP B: Decode and Publish ---
+                    // Decode and Publish 
                     decodeAndPublishDistance(header1, header2);
                     
                 }
@@ -198,10 +179,7 @@ void readAndProcessSensorLines() {
     }
 }
 
-
-// ------------------------------------
-// 7. SETUP & LOOP (Main Program Flow)
-// ------------------------------------
+// Setup and Loop 
 void setup() {
     Serial.begin(115200); 
     
