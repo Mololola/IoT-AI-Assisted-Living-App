@@ -1,39 +1,33 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 
-// ------------------------------------
-// 1. CONFIGURATION (*** CRITICAL: UPDATE THESE VALUES ***)
-// ------------------------------------
+// Change these values based on WiFi connection
 const char* ssid = "Hyperoptic Fibre 7323";           // Your WiFi Network Name
 const char* password = "UjrjR7Y4C437U4";   // Your WiFi Password
 const char* mqtt_server = "192.168.1.108";     // The IP address of your Raspberry Pi (Mosquitto Broker)
 
 const char* mqtt_client_id = "ESP32_Pressure_Sensor_01"; 
-const char* mqtt_publish_topic = "home/bedroom/pressure"; 
+const char* mqtt_publish_topic = "home/bedroom/pressure"; // Call on RaspberryPi 
 
-// --- SAMPLING & PUBLISHING RATES (OPTIMIZED FOR BATTERY LIFE) ---
+// Sampling and Publishing Rates
 const long SAMPLE_RATE_MS = 1000;    // Sample ADC every 1 second (1Hz - High enough for reliability)
 const long PUBLISH_INTERVAL_MS = 30000; // Publish over MQTT every 30 seconds (Scheduled Report)
 const float PRESSURE_THRESHOLD_BAR = 0.05; // Publish immediately if pressure changes by 0.05 Bar
 
-// ADC Pin and Calibration for SEN-Pressure20
+// ADC Pin and Calibration
 const int ANALOG_PIN = 4; 
 const float ADC_MAX_VOLTAGE = 3.3;
 const int ADC_RESOLUTION = 4095; 
 const float SENSOR_MAX_PRESSURE = 2.0; 
 
-// ------------------------------------
-// 2. GLOBALS & OBJECTS
-// ------------------------------------
+// Globals and objects
 WiFiClient espClient;
 PubSubClient client(espClient);
 long lastSampleTime = 0; 
 long lastPublishTime = 0; 
 float lastPublishedPressure = -1.0; // Stores the last value successfully published
 
-// ------------------------------------
-// 3. SENSOR READING FUNCTION
-// ------------------------------------
+// Sensor reading function 
 float readPressureValue() {
     int rawValue = analogRead(ANALOG_PIN);
     float voltage = rawValue * (ADC_MAX_VOLTAGE / ADC_RESOLUTION);
@@ -42,9 +36,7 @@ float readPressureValue() {
     return pressure_bar; // Returns pressure in Bar
 }
 
-// ------------------------------------
-// 4. NETWORK FUNCTIONS (Unchanged)
-// ------------------------------------
+// Network function
 void setup_wifi() {
     delay(10);
     Serial.print("Connecting to ");
@@ -79,9 +71,7 @@ void reconnect() {
     }
 }
 
-// ------------------------------------
-// 5. PUBLISHING LOGIC (NEW)
-// ------------------------------------
+// Publishing Logic 
 void publishPressure(float pressure) {
     if (!client.connected()) return;
 
@@ -102,10 +92,7 @@ void publishPressure(float pressure) {
     Serial.println(" Bar");
 }
 
-
-// ------------------------------------
-// 6. SETUP & LOOP
-// ------------------------------------
+// Setup and Loop 
 void setup() {
     Serial.begin(115200); 
     
