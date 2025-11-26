@@ -2,47 +2,44 @@
 #include <WiFi.h>      // For Wi-Fi Connectivity
 #include <PubSubClient.h> // For MQTT Protocol
 
-// Configuration changed based on WiFi 
-const char* ssid = "Hyperoptic Fibre 7323";            
-const char* password = "UjrjR7Y4C437U4";      
-const char* mqtt_server = "192.168.1.108";    
 
+//Configuration ( edit to specific WiFi and MQTT requirements 
+const char* ssid = "Hyperoptic Fibre 7323";            // Your WiFi Network Name
+const char* password = "UjrjR7Y4C437U4";      // Your WiFi Password
+const char* mqtt_server = "192.168.1.108";    
 const char* mqtt_client_id = "ESP32_HMMD_MQTT_01"; 
-const char* mqtt_publish_topic = "home/bedroom/presence"; //Connection to Raspberry Pi 
+const char* mqtt_publish_topic = "home/bedroom/presence"; 
 
-// We only publish to MQTT if 100ms has passed since the last successful decode.
-const long TARGET_SAMPLE_RATE_MS = 100; 
-long last_sample_time = 0; // Tracks when the last publish occurred
+// Publishign Interval
+const long TARGET_PUBLISH_INTERVAL_MS = 500; 
+long lastReadTime = 0; // Tracks when the last publish occurred
 
-// Serial Pins
-#define RX1_PIN 18 // HMMD TX connects to ESP32 RX (Input)
-#define TX1_PIN 19 // HMMD RX connects to ESP32 TX (Output)
+// Pinns 
+#define RX1_PIN 18
+#define TX1_PIN 19
 #define HMMD_BAUDRATE 115200 
 
-// HMMD command data 
-// Configuration command to ensure the sensor is streaming data
+// HMMD command (Configuration command to ensure the sensor is streaming data)
 String hex_to_send = "FDFCFBFA0800120000006400000004030201"; 
 
 // Constants for Packet Decoding
-const byte HEADER_1 = 0xFD; 
-const byte HEADER_2 = 0xFC; 
 const int PACKET_LENGTH = 14; 
-const int DISTANCE_OFFSET = 8; // Assumed offset of the distance field (Must be verified with datasheet!)
+const int DISTANCE_OFFSET = 1; 
 const int DISTANCE_FIELD_LENGTH = 2; 
 
-// Globals and objects 
-HardwareSerial HMMDSerial(1); // Custom serial object for sensor communication (UART1)
+
+// Globals and Objects 
+HardwareSerial HMMDSerial(1); // Custom serial object for sensor communication
 WiFiClient espClient;         
 PubSubClient client(espClient); 
 
-
-// Function prototype
+// Functions 
 void sendHexData(String hexString);
-void readAndProcessSensorLines();
+void readAndPublishData();
 void setup_wifi();
 void reconnect();
 
-// WiFi Setup 
+// WiFi Setup and MQTT Functions 
 void setup_wifi() {
     delay(10);
     Serial.print("Connecting to ");
@@ -61,7 +58,6 @@ void setup_wifi() {
     Serial.println(WiFi.localIP());
 }
 
-// MQTT Reconnection logic
 void reconnect() {
     while (!client.connected()) {
         Serial.print("Attempting MQTT connection...");
@@ -102,82 +98,48 @@ void sendHexData(String hexString) {
     HMMDSerial.write(hexBytes, byteCount); // Send data via HMMDSerial (UART1)
 }
 
-// Decode and Publishing logic 
-void decodeAndPublishDistance(byte header1, byte header2) {
-    byte buffer[PACKET_LENGTH];
+// Time readings and publishing logic 
+void readAndPublishData() {
     
-    // Check if the rest of the packet is available
-    if (HMMDSerial.available() >= (PACKET_LENGTH - 2)) {
-        
-        // Read the rest of the available packet
-        // Start buffer from index 2, as 0 and 1 are the headers
-        HMMDSerial.readBytes(&buffer[2], PACKET_LENGTH - 2); 
-
-        // 1. EXTRACT DISTANCE BYTES (Assumed Little Endian)
-        // Check if distance offset is within the buffer bounds
-        if (DISTANCE_OFFSET + DISTANCE_FIELD_LENGTH > PACKET_LENGTH) {
-            Serial.println("Error: Distance offset out of bounds.");
-            // Read remaining data to clear buffer
-            while(HMMDSerial.available()) HMMDSerial.read();
-            return;
-        }
-
-        uint16_t rawDistance = (buffer[DISTANCE_OFFSET + 1] << 8) | buffer[DISTANCE_OFFSET];
-        
-        // 2. CONVERT TO CENTIMETERS (Assumed scaling factor)
-        float distance_cm = (float)rawDistance / 10.0; 
-        
-        // MQTT Publishing 
-        if (client.connected()) {
-            // Convert float distance to a character array for MQTT payload
-            char payload[10];
-            dtostrf(distance_cm, 5, 2, payload); // Convert float to string
-            
-            // Publish the distance to the MQTT broker
-            client.publish(mqtt_publish_topic, payload);
-            
-            Serial.print("MQTT Pub (10Hz): ");
-            Serial.print(payload);
-            Serial.println(" cm");
-        }
-        
-    } else {
-        // Not enough data for a full packet; discard to sync for the next full packet.
-        while(HMMDSerial.available()) HMMDSerial.read();
-    }
-}
-
-void readAndProcessSensorLines() {
-    // 1. CHECK SAMPLING RATE: Drop the packet if TARGET_SAMPLE_RATE_MS has not passed.
-    if (millis() - last_sample_time < TARGET_SAMPLE_RATE_MS) {
-        // Discard data to clear the buffer if we are too fast
-        while (HMMDSerial.available()) HMMDSerial.read(); 
-        return; 
-    }
-    
-    // 2. ONLY PROCEED IF NEW DATA IS AVAILABLE AFTER TIMEOUT
+    // 1. Read Sensor Data 
+    // Read any available data from the sensor port (HMMDSerial)
     if (HMMDSerial.available() > 0) {
         
-        //  Look for the Start Header (FD FC)
-        byte header1 = HMMDSerial.read();
+        // Read until a newline is found (assuming sensor sends text lines)
+        String line = HMMDSerial.readStringUntil('\n');
+        line.trim();
 
-        if (header1 == HEADER_1) {
+        // 2. Parse for distance 
+        // We are looking for the 'Range' value, which should be dynamic.
+        if (line.startsWith("Range ")) {
             
-            if (HMMDSerial.available() > 0) {
-                byte header2 = HMMDSerial.read();
+            // Time check (Throttle Publishing 
+            if (millis() - lastReadTime < TARGET_PUBLISH_INTERVAL_MS) {
+                return; // Too soon, discard the reading and exit
+            }
+            lastReadTime = millis(); // Reset timer
+
+            // Extract the substring after "Range " 
+            String distanceStr = line.substring(6); 
+    
+            // Convert the distance string to a float
+            float distance_cm = distanceStr.toFloat();
+            
+            // MQTT Publishing 
+            if (client.connected()) {
+                char payload[10];
+                dtostrf(distance_cm, 5, 2, payload); 
                 
-                if (header2 == HEADER_2) {
-                    
-                    last_sample_time = millis(); // RESET THE SAMPLING TIMER ONLY ON SUCCESSFUL HEADER DECODE
-                    
-                    // Decode and Publish 
-                    decodeAndPublishDistance(header1, header2);
-                    
-                }
+                client.publish(mqtt_publish_topic, payload);
+                
+                Serial.print("MQTT Pub : ");
+                Serial.print(payload);
+                Serial.println(" cm");
             }
         }
     }
 }
+
 
 // Setup and Loop 
 void setup() {
@@ -189,35 +151,34 @@ void setup() {
     }
     Serial.println("Serial Monitor Initialized.");
     
-    // Initialize Wi-Fi and connect to the network
     setup_wifi(); 
     client.setServer(mqtt_server, 1883); // Set MQTT server details
     
-    // Start the sensor serial port (UART1)
     HMMDSerial.begin(HMMD_BAUDRATE, SERIAL_8N1, RX1_PIN, TX1_PIN);
     Serial.println("Serial1 Initialized on RX:" + String(RX1_PIN) + ", TX:" + String(TX1_PIN));
     
     Serial.println("Sending Configuration Hex Command...");
+    // This command likely puts the sensor into the correct text/stream mode
     sendHexData(hex_to_send);
     Serial.println("Initial command sent.");
     
     Serial.println("Waiting 5 seconds for sensor to initialize and stream data...");
     delay(5000); 
-    Serial.println("Start Monitoring Sensor Stream (10Hz Target).");
+    Serial.println("Start Monitoring Sensor Stream (2s Target).");
     
-    // Set the initial sample time here to ensure the first packet is sent immediately
-    last_sample_time = millis();
+    // Set the initial read time to trigger the first read immediately
+    lastReadTime = millis();
 }
     
 void loop() {
-    // 1. Maintain MQTT Connection (Must be called frequently)
+    // 1. Maintain MQTT Connection
     if (!client.connected()) {
         reconnect();
     }
     client.loop(); 
 
-    // 2. Read and Publish Sensor Data (Now controlled by TARGET_SAMPLE_RATE_MS)
-    readAndProcessSensorLines();
+    // 2. Read and Publish Sensor Data (Timed)
+    readAndPublishData();
     
-    delay(1); // Minimal delay to keep loop running fast
+    
 }
