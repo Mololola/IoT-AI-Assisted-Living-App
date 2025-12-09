@@ -1,0 +1,702 @@
+"""
+Enhanced MQTT Multi-Sensor Anomaly Detector with Alert System
+Real-time detection with JSON alert generation for app integration
+"""
+
+import paho.mqtt.client as mqtt
+import json
+import os
+import numpy as np
+from datetime import datetime, timedelta
+import joblib
+from collections import deque
+import threading
+import time
+
+class EnhancedMQTTDetector:
+    """Enhanced detector with config integration and alert system"""
+    
+    def __init__(self, config_path="config.json"):
+        print("\n" + "="*60)
+        print("  🔍 ENHANCED ANOMALY DETECTION SYSTEM")
+        print("  Real-time Monitoring with Alert Generation")
+        print("="*60)
+        
+        # Load configuration
+        self.config = self.load_config(config_path)
+        
+        # Create directories
+        os.makedirs('anomalies', exist_ok=True)
+        os.makedirs('logs', exist_ok=True)
+        os.makedirs('alerts', exist_ok=True)
+        
+        # Load model
+        if not self.load_model():
+            raise RuntimeError("No model available")
+        
+        # MQTT Configuration from config
+        self.mqtt_broker = self.config['mqtt_config']['broker_ip']
+        self.mqtt_port = self.config['mqtt_config']['broker_port']
+        self.topics = self.config['mqtt_config']['topics']
+        
+        # Sensor data storage
+        self.sensor_data = {
+            'pressure': {'value': 0, 'state': 'empty', 'last_update': None},
+            'motion': {'value': 'OUT', 'state': 'no_motion', 'last_update': None},
+            'presence': {'value': 999, 'state': 'absent', 'last_update': None}
+        }
+        
+        # Calibration from config
+        self.calibration = {
+            'pressure': {
+                'empty_max': self.config['sensor_calibration']['pressure']['empty_threshold'],
+                'occupied_min': self.config['sensor_calibration']['pressure']['occupied_threshold']
+            },
+            'presence': {
+                'near': self.config['sensor_calibration']['presence']['near_threshold'],
+                'far': self.config['sensor_calibration']['presence']['far_threshold']
+            }
+        }
+        
+        # Detection parameters from config
+        detection_params = self.config['ml_parameters']['detection']
+        self.detection_interval = detection_params['detection_interval_seconds']
+        self.severity_thresholds = detection_params['anomaly_score_thresholds']
+        self.alert_cooldown = detection_params['alert_cooldown_minutes'] * 60
+        
+        # Data management
+        self.data_window = deque(maxlen=self.window_size)
+        self.anomaly_log = []
+        self.alert_history = []
+        self.detection_count = 0
+        self.anomaly_count = 0
+        
+        # Alert tracking
+        self.last_alert_time = {}  # Track last alert time per anomaly type
+        
+        # Session info
+        self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Threading
+        self.data_lock = threading.Lock()
+        self.detection_active = False
+        
+        # MQTT Client
+        # MQTT Client (Fixed for paho-mqtt 2.0)
+        self.client = mqtt.Client(
+            mqtt.CallbackAPIVersion.VERSION1,
+            f"RaspberryPi_Tester_{datetime.now().strftime('%H%M%S')}"
+        )
+        self.client.on_connect = self.on_connect
+        self.client.on_message = self.on_message
+        self.client.on_disconnect = self.on_disconnect
+        
+        print(f"✅ System initialized")
+        print(f"📁 Session ID: {self.session_id}")
+        print(f"🌐 MQTT Broker: {self.mqtt_broker}")
+        print(f"📋 Config: {config_path}")
+    
+    def load_config(self, config_path):
+        """Load configuration file"""
+        try:
+            with open(config_path, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            print(f"⚠️ Config not found, using defaults")
+            # Return minimal config
+            return {
+                'mqtt_config': {
+                    'broker_ip': '192.168.1.100',
+                    'broker_port': 1883,
+                    'topics': {
+                        'pressure': 'home/bedroom/pressure',
+                        'motion': 'home/bedroom/PIR',
+                        'presence': 'home/bedroom/presence'
+                    }
+                },
+                'sensor_calibration': {
+                    'pressure': {'empty_threshold': 0.1, 'occupied_threshold': 0.5},
+                    'presence': {'near_threshold': 50, 'far_threshold': 200}
+                },
+                'ml_parameters': {
+                    'detection': {
+                        'detection_interval_seconds': 5,
+                        'anomaly_score_thresholds': {
+                            'high_severity': -0.6,
+                            'medium_severity': -0.4,
+                            'low_severity': -0.2
+                        },
+                        'alert_cooldown_minutes': 5
+                    }
+                },
+                'alert_settings': {
+                    'enabled': True,
+                    'json_output_dir': 'alerts/',
+                    'mqtt_alert_topic': 'home/bedroom/alerts'
+                },
+                'anomaly_definitions': {}
+            }
+    
+    def load_model(self):
+        """Load the trained model"""
+        model_paths = [
+            "models/latest_multi_model.pkl",
+            "models/latest_model.pkl"
+        ]
+        
+        for model_path in model_paths:
+            if os.path.exists(model_path):
+                try:
+                    model_data = joblib.load(model_path)
+                    self.model = model_data['model']
+                    self.scaler = model_data['scaler']
+                    self.feature_names = model_data['feature_names']
+                    self.window_size = model_data['window_size']
+                    self.model_type = model_data.get('model_type', 'single_sensor')
+                    
+                    # Store model info
+                    self.model_info = {
+                        'model_path': model_path,
+                        'model_type': self.model_type,
+                        'window_size': self.window_size,
+                        'feature_count': len(self.feature_names),
+                        'loaded_at': datetime.now().isoformat()
+                    }
+                    
+                    print(f"✅ Model loaded: {self.model_type}")
+                    print(f"  Window: {self.window_size} samples")
+                    print(f"  Features: {len(self.feature_names)}")
+                    return True
+                except Exception as e:
+                    print(f"Error loading {model_path}: {e}")
+        
+        print("❌ No trained model found!")
+        return False
+    
+    def on_connect(self, client, userdata, flags, rc):
+        """MQTT connection callback"""
+        if rc == 0:
+            print("✅ Connected to MQTT Broker")
+            for sensor, topic in self.topics.items():
+                client.subscribe(topic)
+                print(f"  Subscribed: {topic}")
+        else:
+            print(f"❌ Connection failed: {rc}")
+    
+    def on_disconnect(self, client, userdata, rc):
+        if rc != 0:
+            print(f"Unexpected disconnection")
+    
+    def on_message(self, client, userdata, msg):
+        """Process MQTT messages"""
+        try:
+            topic = msg.topic
+            payload = msg.payload.decode('utf-8').strip()
+            
+            with self.data_lock:
+                timestamp = datetime.now()
+                
+                if topic == self.topics['pressure']:
+                    value = float(payload)
+                    self.sensor_data['pressure']['value'] = value
+                    self.sensor_data['pressure']['last_update'] = timestamp
+                    
+                    # Determine state
+                    if value < self.calibration['pressure']['empty_max']:
+                        self.sensor_data['pressure']['state'] = 'empty'
+                    elif value > self.calibration['pressure']['occupied_min']:
+                        self.sensor_data['pressure']['state'] = 'occupied'
+                    else:
+                        self.sensor_data['pressure']['state'] = 'uncertain'
+                
+                elif topic == self.topics['motion']:
+                    self.sensor_data['motion']['value'] = payload
+                    self.sensor_data['motion']['last_update'] = timestamp
+                    self.sensor_data['motion']['state'] = 'motion' if payload == 'IN' else 'no_motion'
+                
+                elif topic == self.topics['presence']:
+                    value = int(payload)
+                    self.sensor_data['presence']['value'] = value
+                    self.sensor_data['presence']['last_update'] = timestamp
+                    
+                    # Determine state
+                    if value < self.calibration['presence']['near']:
+                        self.sensor_data['presence']['state'] = 'near'
+                    elif value < self.calibration['presence']['far']:
+                        self.sensor_data['presence']['state'] = 'far'
+                    else:
+                        self.sensor_data['presence']['state'] = 'absent'
+                        
+        except Exception as e:
+            print(f"Error processing {topic}: {e}")
+    
+    def connect_mqtt(self):
+        """Connect to MQTT broker"""
+        try:
+            print(f"Connecting to {self.mqtt_broker}...")
+            self.client.connect(self.mqtt_broker, self.mqtt_port, 60)
+            self.client.loop_start()
+            time.sleep(2)
+            return True
+        except Exception as e:
+            print(f"❌ Connection failed: {e}")
+            return False
+    
+    def extract_features_from_window(self):
+        """Extract features from current window"""
+        if len(self.data_window) < self.window_size:
+            return None
+        
+        window = list(self.data_window)
+        features = []
+        
+        # Time features
+        last_sample = window[-1]
+        features.append(last_sample['hour'])
+        features.append(last_sample['minute'])
+        features.append(last_sample['weekday'])
+        features.append(int(last_sample.get('is_night', False)))
+        features.append(int(last_sample.get('is_sleep_time', False)))
+        
+        # Add remaining features based on model type (simplified for brevity)
+        if self.model_type == 'multi_sensor' and len(self.feature_names) > 20:
+            # Full multi-sensor features
+            features.append(int(last_sample.get('is_morning', False)))
+            features.append(int(last_sample.get('is_evening', False)))
+            
+            # Pressure features
+            pressures = [w.get('pressure_value', 0) * 100 for w in window]
+            features.extend([
+                np.mean(pressures), np.std(pressures),
+                np.min(pressures), np.max(pressures), np.median(pressures)
+            ])
+            
+            pressure_diff = np.diff(pressures)
+            features.append(np.mean(np.abs(pressure_diff)) if len(pressure_diff) > 0 else 0)
+            features.append(np.max(pressure_diff) if len(pressure_diff) > 0 else 0)
+            
+            pressure_states = [w.get('pressure_state', 'empty') for w in window]
+            features.append(pressure_states.count('occupied') / len(window))
+            features.append(pressure_states.count('uncertain') / len(window))
+            
+            # Motion features
+            motion_states = [w.get('motion_state', 'no_motion') for w in window]
+            features.append(motion_states.count('motion') / len(window))
+            
+            bursts = 0
+            in_burst = False
+            for state in motion_states:
+                if state == 'motion' and not in_burst:
+                    bursts += 1
+                    in_burst = True
+                elif state == 'no_motion':
+                    in_burst = False
+            features.append(bursts)
+            
+            max_seq = sum(1 for s in motion_states if s == 'motion')
+            features.append(max_seq)
+            
+            # Presence features
+            presence_states = [w.get('presence_state', 'absent') for w in window]
+            features.append(presence_states.count('near') / len(window))
+            features.append(presence_states.count('far') / len(window))
+            features.append(presence_states.count('absent') / len(window))
+            features.append(sum(1 for i in range(1, len(presence_states))
+                              if presence_states[i] != presence_states[i-1]))
+            
+            # Cross-sensor and additional features (simplified)
+            features.extend([0] * (len(self.feature_names) - len(features)))
+        
+        else:
+            # Basic features for single sensor
+            pressures = [w.get('pressure_value', 0) * 100 for w in window]
+            features.extend([
+                np.mean(pressures), np.std(pressures),
+                np.min(pressures), np.max(pressures), np.median(pressures)
+            ])
+            # Add remaining features
+            features.extend([0] * (len(self.feature_names) - len(features)))
+        
+        return np.array(features[:len(self.feature_names)])
+    
+    def detect_anomaly(self):
+        """Detect anomaly in current window"""
+        features = self.extract_features_from_window()
+        if features is None:
+            return False, 0.0, {}
+        
+        # Scale and predict
+        features_scaled = self.scaler.transform(features.reshape(1, -1))
+        prediction = self.model.predict(features_scaled)[0]
+        score = self.model.score_samples(features_scaled)[0]
+        
+        is_anomaly = prediction == -1
+        
+        # Analyze anomaly
+        details = {}
+        if is_anomaly:
+            window = list(self.data_window)
+            anomaly_type = self.classify_anomaly(window)
+            severity = self.determine_severity(score, anomaly_type)
+            
+            details = {
+                'type': anomaly_type,
+                'score': float(score),
+                'severity': severity,
+                'timestamp': datetime.now().isoformat(),
+                'sensor_states': {
+                    'pressure': self.sensor_data['pressure']['state'],
+                    'motion': self.sensor_data['motion']['value'],
+                    'presence': self.sensor_data['presence']['state']
+                },
+                'sensor_values': {
+                    'pressure_bar': self.sensor_data['pressure']['value'],
+                    'distance_cm': self.sensor_data['presence']['value']
+                }
+            }
+        
+        return is_anomaly, score, details
+    
+    def classify_anomaly(self, window):
+        """Classify the type of anomaly"""
+        last_samples = window[-10:] if len(window) >= 10 else window
+        
+        is_sleep_time = any(w.get('is_sleep_time', False) for w in last_samples)
+        bed_occupied = sum(1 for w in last_samples 
+                         if w.get('pressure_state') == 'occupied') > 5
+        motion_detected = sum(1 for w in last_samples 
+                            if w.get('motion_state') == 'motion') > 3
+        person_near = sum(1 for w in last_samples 
+                        if w.get('presence_state') == 'near') > 3
+        
+        # Check against configured anomaly definitions
+        if 'anomaly_definitions' in self.config:
+            if is_sleep_time and motion_detected and not bed_occupied:
+                return "potential_fall"
+            elif is_sleep_time and bed_occupied and motion_detected:
+                return "restless_sleep"
+            elif not is_sleep_time and bed_occupied and not motion_detected:
+                return "prolonged_inactivity"
+            elif is_sleep_time and not bed_occupied:
+                return "absence_during_sleep"
+            elif person_near and not motion_detected:
+                return "standing_still"
+        
+        return "unusual_pattern"
+    
+    def determine_severity(self, score, anomaly_type):
+        """Determine anomaly severity"""
+        # Check config definitions first
+        if anomaly_type in self.config.get('anomaly_definitions', {}):
+            return self.config['anomaly_definitions'][anomaly_type].get('severity', 'MEDIUM')
+        
+        # Use score thresholds
+        if score < self.severity_thresholds['high_severity']:
+            return "HIGH"
+        elif score < self.severity_thresholds['medium_severity']:
+            return "MEDIUM"
+        else:
+            return "LOW"
+    
+    def create_alert(self, anomaly_details):
+        """Create JSON alert for app integration"""
+        alert_id = f"ALERT_{self.session_id}_{self.anomaly_count:04d}"
+        
+        alert = {
+            'alert_id': alert_id,
+            'timestamp': anomaly_details['timestamp'],
+            'type': anomaly_details['type'],
+            'severity': anomaly_details['severity'],
+            'score': anomaly_details['score'],
+            'location': 'bedroom',
+            'user_id': self.config['user_profile']['user_id'],
+            'status': 'active',
+            'acknowledged': False,
+            'sensor_data': anomaly_details['sensor_values'],
+            'sensor_states': anomaly_details['sensor_states'],
+            'description': self.get_anomaly_description(anomaly_details['type']),
+            'recommended_action': self.get_recommended_action(anomaly_details['type']),
+            'model_info': {
+                'model_type': self.model_type,
+                'confidence': abs(anomaly_details['score'])
+            },
+            'emergency_contacts': self.config['user_profile'].get('emergency_contacts', [])
+        }
+        
+        # Save alert to JSON file
+        alert_file = f"alerts/alert_{alert_id}.json"
+        with open(alert_file, 'w') as f:
+            json.dump(alert, f, indent=2)
+        
+        # Also publish to MQTT if configured
+        if self.config['alert_settings']['enabled']:
+            alert_topic = self.config['alert_settings'].get('mqtt_alert_topic', 
+                                                           'home/bedroom/alerts')
+            self.client.publish(alert_topic, json.dumps(alert))
+        
+        self.alert_history.append(alert)
+        
+        return alert_id, alert_file
+    
+    def get_anomaly_description(self, anomaly_type):
+        """Get human-readable description of anomaly"""
+        descriptions = {
+            'potential_fall': 'Person may have fallen from bed',
+            'restless_sleep': 'Excessive movement detected during sleep hours',
+            'prolonged_inactivity': 'No movement detected for extended period',
+            'absence_during_sleep': 'Bed is empty during normal sleep hours',
+            'standing_still': 'Person standing still near door',
+            'unusual_pattern': 'Unusual activity pattern detected'
+        }
+        return descriptions.get(anomaly_type, 'Anomaly detected')
+    
+    def get_recommended_action(self, anomaly_type):
+        """Get recommended action for anomaly type"""
+        actions = {
+            'potential_fall': 'Check on person immediately',
+            'restless_sleep': 'Monitor for continued restlessness',
+            'prolonged_inactivity': 'Check wellness status',
+            'absence_during_sleep': 'Verify person location',
+            'standing_still': 'Check if assistance needed',
+            'unusual_pattern': 'Review sensor data'
+        }
+        return actions.get(anomaly_type, 'Review and assess situation')
+    
+    def should_send_alert(self, anomaly_type):
+        """Check if alert should be sent based on cooldown"""
+        current_time = time.time()
+        
+        if anomaly_type not in self.last_alert_time:
+            self.last_alert_time[anomaly_type] = current_time
+            return True
+        
+        time_since_last = current_time - self.last_alert_time[anomaly_type]
+        
+        if time_since_last >= self.alert_cooldown:
+            self.last_alert_time[anomaly_type] = current_time
+            return True
+        
+        return False
+    
+    def handle_anomaly(self, score, details):
+        """Handle detected anomaly with alert creation"""
+        self.anomaly_count += 1
+        
+        # Check if alert should be sent
+        if self.should_send_alert(details['type']):
+            # Create alert
+            alert_id, alert_file = self.create_alert(details)
+            
+            # Display alert
+            print(f"\n{'='*70}")
+            print(f"🚨 ANOMALY DETECTED - {details['severity']} SEVERITY")
+            print(f"   Alert ID: {alert_id}")
+            print(f"   Type: {details['type']}")
+            print(f"   Description: {self.get_anomaly_description(details['type'])}")
+            print(f"   Score: {score:.3f}")
+            print(f"   Time: {datetime.now().strftime('%H:%M:%S')}")
+            print(f"   Action: {self.get_recommended_action(details['type'])}")
+            print(f"   Alert saved: {alert_file}")
+            print('='*70)
+        else:
+            print(f"\r⚠️ {details['type']} (cooldown active)", end="")
+        
+        # Log anomaly
+        self.anomaly_log.append({
+            'timestamp': datetime.now().isoformat(),
+            'type': details['type'],
+            'severity': details['severity'],
+            'score': score
+        })
+    
+    def run_detection(self, duration_minutes=None):
+        """Run real-time anomaly detection"""
+        print("\n🎯 Starting enhanced anomaly detection...")
+        print(f"   Detection interval: {self.detection_interval}s")
+        print(f"   Alert cooldown: {self.alert_cooldown}s")
+        print("   Press Ctrl+C to stop\n")
+        
+        self.detection_active = True
+        
+        if duration_minutes:
+            print(f"Running for {duration_minutes} minutes")
+            end_time = time.time() + (duration_minutes * 60)
+        else:
+            print("Running continuously...")
+            end_time = float('inf')
+        
+        sample_rate = 2  # Hz
+        last_detection_time = time.time()
+        status_update_time = time.time()
+        
+        while time.time() < end_time and self.detection_active:
+            try:
+                # Get time context
+                now = datetime.now()
+                hour = now.hour
+                
+                # Create data point
+                with self.data_lock:
+                    data_point = {
+                        'timestamp': now.isoformat(),
+                        'hour': hour,
+                        'minute': now.minute,
+                        'weekday': now.weekday(),
+                        'is_night': hour >= 22 or hour <= 6,
+                        'is_sleep_time': hour >= 23 or hour <= 7,
+                        'is_morning': 6 <= hour <= 9,
+                        'is_evening': 18 <= hour <= 22,
+                        'pressure_value': self.sensor_data['pressure']['value'],
+                        'pressure_state': self.sensor_data['pressure']['state'],
+                        'motion_state': self.sensor_data['motion']['state'],
+                        'presence_state': self.sensor_data['presence']['state'],
+                        'room_state': self.determine_room_state()
+                    }
+                
+                # Add to window
+                self.data_window.append(data_point)
+                
+                # Display status every 5 seconds
+                if time.time() - status_update_time >= 5:
+                    status = (f"Time: {now.strftime('%H:%M:%S')} | "
+                             f"P:{data_point['pressure_state']:8s} | "
+                             f"M:{self.sensor_data['motion']['value']:3s} | "
+                             f"D:{data_point['presence_state']:6s} | "
+                             f"Checks:{self.detection_count} | "
+                             f"Anomalies:{self.anomaly_count}")
+                    print(f"\r{status}", end="")
+                    status_update_time = time.time()
+                
+                # Run detection
+                if (len(self.data_window) >= self.window_size and
+                    time.time() - last_detection_time >= self.detection_interval):
+                    
+                    is_anomaly, score, details = self.detect_anomaly()
+                    self.detection_count += 1
+                    
+                    if is_anomaly:
+                        self.handle_anomaly(score, details)
+                    
+                    last_detection_time = time.time()
+                
+                time.sleep(1.0 / sample_rate)
+                
+            except KeyboardInterrupt:
+                print("\n\n⚠️ Detection stopped")
+                break
+            except Exception as e:
+                print(f"\n❌ Error: {e}")
+                time.sleep(1)
+        
+        self.detection_active = False
+        self.save_session_summary()
+    
+    def determine_room_state(self):
+        """Determine current room state"""
+        p_state = self.sensor_data['pressure']['state']
+        m_state = self.sensor_data['motion']['value']
+        d_state = self.sensor_data['presence']['state']
+        
+        if p_state == 'occupied' and m_state == 'OUT':
+            return 'sleeping' if datetime.now().hour >= 22 else 'resting'
+        elif p_state == 'occupied' and m_state == 'IN':
+            return 'active_in_bed'
+        elif p_state == 'empty' and m_state == 'IN':
+            return 'moving_in_room'
+        elif p_state == 'empty' and m_state == 'OUT' and d_state == 'absent':
+            return 'room_empty'
+        else:
+            return 'transitioning'
+    
+    def save_session_summary(self):
+        """Save detection session summary"""
+        summary = {
+            'session_id': self.session_id,
+            'start_time': self.session_id,
+            'end_time': datetime.now().isoformat(),
+            'model_info': self.model_info,
+            'config_version': self.config['system_info']['version'],
+            'total_detections': self.detection_count,
+            'total_anomalies': self.anomaly_count,
+            'anomaly_rate': self.anomaly_count / max(self.detection_count, 1),
+            'anomaly_log': self.anomaly_log,
+            'alerts_generated': len(self.alert_history)
+        }
+        
+        summary_file = f"anomalies/session_{self.session_id}.json"
+        with open(summary_file, 'w') as f:
+            json.dump(summary, f, indent=2)
+        
+        print(f"\n\n📊 Session Summary:")
+        print(f"  Duration: {(datetime.now() - datetime.strptime(self.session_id, '%Y%m%d_%H%M%S')).seconds // 60} minutes")
+        print(f"  Total Checks: {self.detection_count}")
+        print(f"  Anomalies Detected: {self.anomaly_count}")
+        print(f"  Alerts Generated: {len(self.alert_history)}")
+        if self.detection_count > 0:
+            print(f"  Anomaly Rate: {self.anomaly_count/self.detection_count*100:.1f}%")
+        print(f"  Summary saved: {summary_file}")
+    
+    def cleanup(self):
+        """Cleanup MQTT connection"""
+        self.detection_active = False
+        self.client.loop_stop()
+        self.client.disconnect()
+        print("🧹 Cleanup complete")
+
+def main():
+    """Main detection function"""
+    print("\n" + "="*60)
+    print("  ENHANCED ANOMALY DETECTION SYSTEM")
+    print("="*60)
+    
+    # Check for model
+    if not os.path.exists("models/latest_multi_model.pkl"):
+        print("\n❌ No trained model found!")
+        print("Please run in order:")
+        print("1. enhanced_mqtt_collector.py")
+        print("2. enhanced_mqtt_trainer.py")
+        return
+    
+    detector = EnhancedMQTTDetector("config.json")
+    
+    print("\n📋 Detection Options:")
+    print("1. Quick test (5 minutes)")
+    print("2. Standard monitoring (30 minutes)")
+    print("3. Extended monitoring (2 hours)")
+    print("4. Continuous monitoring")
+    
+    choice = input("\nSelect (1-4): ")
+    
+    duration = None
+    if choice == '1':
+        duration = 5
+    elif choice == '2':
+        duration = 30
+    elif choice == '3':
+        duration = 120
+    elif choice == '4':
+        duration = None
+    else:
+        print("Invalid choice")
+        return
+    
+    try:
+        # Connect to MQTT
+        if not detector.connect_mqtt():
+            print("Failed to connect to MQTT broker")
+            return
+        
+        print("\n✅ Ready to detect anomalies!")
+        print("   Alerts will be saved to: alerts/")
+        input("\nPress Enter to start detection...")
+        
+        # Run detection
+        detector.run_detection(duration)
+        
+    except KeyboardInterrupt:
+        print("\n⚠️ Stopped by user")
+    finally:
+        detector.cleanup()
+
+if __name__ == "__main__":
+    main()
