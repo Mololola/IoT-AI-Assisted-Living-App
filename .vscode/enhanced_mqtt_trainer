@@ -1,0 +1,523 @@
+"""
+Enhanced Multi-Sensor ML Trainer with Backup Support
+Trains model from collected data and creates backups
+"""
+
+import json
+import os
+import numpy as np
+import pandas as pd
+from datetime import datetime
+from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import StandardScaler
+import joblib
+import glob
+from collections import Counter
+import shutil
+
+class EnhancedMultiSensorTrainer:
+    """Enhanced trainer with config integration and backup support"""
+    
+    def __init__(self, config_path="config.json"):
+        print("\n" + "="*60)
+        print("  🤖 ENHANCED ML MODEL TRAINER")
+        print("  With Automatic Backup System")
+        print("="*60)
+        
+        # Load configuration
+        self.config = self.load_config(config_path)
+        
+        # Create directories
+        os.makedirs('models', exist_ok=True)
+        os.makedirs('analysis', exist_ok=True)
+        os.makedirs(self.config['backup_settings']['backup_dir'], exist_ok=True)
+        
+        # Model parameters from config
+        ml_params = self.config['ml_parameters']
+        self.window_size = ml_params['window_size_samples']
+        self.contamination = ml_params['contamination_factor']
+        self.n_estimators = ml_params['n_estimators']
+        
+        # Initialize components
+        self.model = None
+        self.scaler = StandardScaler()
+        self.training_data = []
+        self.feature_names = []
+        
+        # Training metadata
+        self.training_session = {
+            'start_time': datetime.now().isoformat(),
+            'config_version': self.config['system_info']['version'],
+            'trainer_version': '2.0'
+        }
+        
+        print(f"  📋 Config loaded: {config_path}")
+        print(f"  Window Size: {self.window_size} samples")
+        print(f"  Contamination: {self.contamination*100}%")
+        print(f"  Estimators: {self.n_estimators}")
+        print()
+    
+    def load_config(self, config_path):
+        """Load configuration file"""
+        try:
+            with open(config_path, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            print(f"⚠️ Config file not found, using defaults")
+            return {
+                'system_info': {'version': '1.0'},
+                'ml_parameters': {
+                    'window_size_samples': 60,
+                    'contamination_factor': 0.03,
+                    'n_estimators': 150,
+                    'training': {'min_samples_required': 1200}
+                },
+                'backup_settings': {
+                    'backup_dir': 'model_backups/',
+                    'backup_on_training': True,
+                    'max_backups': 10
+                }
+            }
+    
+    def load_training_data(self):
+        """Load all training data files"""
+        # Look for enhanced MQTT data first
+        training_files = glob.glob("training_data/mqtt_training_*.json")
+        
+        # Also check for older formats
+        training_files += glob.glob("training_data/mqtt_multi_*.json")
+        training_files += glob.glob("training_data/multi_sensor_*.json")
+        
+        if not training_files:
+            print("❌ No training data found!")
+            print("   Run enhanced_mqtt_collector.py first")
+            return False
+        
+        print(f"📁 Found {len(training_files)} training files:")
+        
+        all_data = []
+        total_samples = 0
+        
+        for file in training_files:
+            print(f"  Loading: {os.path.basename(file)}")
+            with open(file, 'r') as f:
+                content = json.load(f)
+                data = content['data'] if 'data' in content else content
+                
+                # Store metadata if available
+                if 'metadata' in content:
+                    self.training_session['data_metadata'] = content['metadata']
+                
+                # Ensure all required fields exist
+                for sample in data:
+                    # Map fields for compatibility
+                    if 'simulated_hour' in sample:
+                        sample['hour'] = sample['simulated_hour']
+                        sample['minute'] = sample.get('simulated_minute', 0)
+                    elif 'hour' not in sample:
+                        sample['hour'] = datetime.fromisoformat(sample['timestamp']).hour
+                        sample['minute'] = datetime.fromisoformat(sample['timestamp']).minute
+                    
+                    # Ensure motion state compatibility
+                    if 'motion_pir' in sample:
+                        sample['motion_state'] = 'motion' if sample['motion_pir'] == 'IN' else 'no_motion'
+                    
+                    # Ensure presence state
+                    if 'distance_cm' in sample and 'presence_state' not in sample:
+                        dist = sample['distance_cm']
+                        if dist < 50:
+                            sample['presence_state'] = 'near'
+                        elif dist < 200:
+                            sample['presence_state'] = 'far'
+                        else:
+                            sample['presence_state'] = 'absent'
+                
+                all_data.extend(data)
+                total_samples += len(data)
+        
+        self.training_data = all_data
+        print(f"✅ Loaded {total_samples} total samples")
+        
+        # Record in training session
+        self.training_session['total_samples'] = total_samples
+        self.training_session['files_used'] = [os.path.basename(f) for f in training_files]
+        
+        return True
+    
+    def extract_features_from_window(self, window):
+        """Extract comprehensive features from multi-sensor window"""
+        features = []
+        
+        # === TIME FEATURES ===
+        last_sample = window[-1]
+        features.append(last_sample['hour'])
+        features.append(last_sample['minute'])
+        features.append(last_sample.get('weekday', datetime.now().weekday()))
+        features.append(int(last_sample.get('is_night', False)))
+        features.append(int(last_sample.get('is_sleep_time', False)))
+        features.append(int(last_sample.get('is_morning', False)))
+        features.append(int(last_sample.get('is_evening', False)))
+        
+        # === PRESSURE SENSOR FEATURES ===
+        pressures = []
+        for w in window:
+            if 'pressure_bar' in w:
+                pressures.append(w['pressure_bar'] * 100)  # Scale for features
+            elif 'pressure_value' in w:
+                pressures.append(w['pressure_value'])
+            else:
+                pressures.append(0)
+        
+        features.extend([
+            np.mean(pressures), np.std(pressures),
+            np.min(pressures), np.max(pressures), np.median(pressures)
+        ])
+        
+        pressure_diff = np.diff(pressures)
+        features.append(np.mean(np.abs(pressure_diff)) if len(pressure_diff) > 0 else 0)
+        features.append(np.max(pressure_diff) if len(pressure_diff) > 0 else 0)
+        
+        pressure_states = [w.get('pressure_state', 'empty') for w in window]
+        features.append(pressure_states.count('occupied') / len(window))
+        features.append(pressure_states.count('uncertain') / len(window))
+        
+        # === MOTION SENSOR FEATURES ===
+        motion_states = [w.get('motion_state', 'no_motion') for w in window]
+        features.append(motion_states.count('motion') / len(window))
+        
+        # Motion bursts
+        bursts = 0
+        in_burst = False
+        for state in motion_states:
+            if state == 'motion' and not in_burst:
+                bursts += 1
+                in_burst = True
+            elif state == 'no_motion':
+                in_burst = False
+        features.append(bursts)
+        
+        # Max motion sequence
+        max_seq = 0
+        curr_seq = 0
+        for state in motion_states:
+            if state == 'motion':
+                curr_seq += 1
+                max_seq = max(max_seq, curr_seq)
+            else:
+                curr_seq = 0
+        features.append(max_seq)
+        
+        # === PRESENCE SENSOR FEATURES ===
+        presence_states = [w.get('presence_state', 'absent') for w in window]
+        features.append(presence_states.count('near') / len(window))
+        features.append(presence_states.count('far') / len(window))
+        features.append(presence_states.count('absent') / len(window))
+        
+        presence_transitions = sum(1 for i in range(1, len(presence_states))
+                                 if presence_states[i] != presence_states[i-1])
+        features.append(presence_transitions)
+        
+        # === CROSS-SENSOR FEATURES ===
+        restless = sum(1 for i in range(len(window))
+                     if pressure_states[i] == 'occupied' and 
+                        motion_states[i] == 'motion') / len(window)
+        features.append(restless)
+        
+        room_activity = sum(1 for i in range(len(window))
+                          if pressure_states[i] == 'empty' and 
+                             motion_states[i] == 'motion') / len(window)
+        features.append(room_activity)
+        
+        standing = sum(1 for i in range(len(window))
+                     if presence_states[i] == 'near' and 
+                        motion_states[i] == 'no_motion') / len(window)
+        features.append(standing)
+        
+        complete_absence = sum(1 for i in range(len(window))
+                             if pressure_states[i] == 'empty' and
+                                motion_states[i] == 'no_motion' and
+                                presence_states[i] == 'absent') / len(window)
+        features.append(complete_absence)
+        
+        # === ROOM STATE FEATURES ===
+        room_states = [w.get('room_state', 'unknown') for w in window]
+        state_counts = Counter(room_states)
+        most_common = state_counts.most_common(1)[0][1] / len(window) if state_counts else 0
+        features.append(most_common)
+        
+        state_diversity = len(set(room_states)) / len(window)
+        features.append(state_diversity)
+        
+        features.append(room_states.count('sleeping') / len(window))
+        features.append(room_states.count('restless_sleep') / len(window))
+        features.append(room_states.count('room_empty') / len(window))
+        
+        # === ANOMALY INDICATORS ===
+        sleep_active = sum(1 for w in window
+                         if w.get('is_sleep_time', False) and
+                            w.get('motion_state') == 'motion') / len(window)
+        features.append(sleep_active)
+        
+        day_in_bed = sum(1 for w in window
+                       if not w.get('is_sleep_time', False) and
+                          w.get('pressure_state') == 'occupied') / len(window)
+        features.append(day_in_bed)
+        
+        return np.array(features)
+    
+    def prepare_training_windows(self):
+        """Create sliding windows from training data"""
+        print("\n📊 Preparing training windows...")
+        
+        windows = []
+        step_size = self.window_size // 3  # 33% overlap
+        
+        for i in range(0, len(self.training_data) - self.window_size, step_size):
+            window = self.training_data[i:i + self.window_size]
+            windows.append(window)
+        
+        print(f"  Created {len(windows)} training windows")
+        
+        # Extract features
+        print("  Extracting {len(self.feature_names)} features...")
+        X = []
+        for i, window in enumerate(windows):
+            if i % 100 == 0:
+                print(f"    Processing window {i}/{len(windows)}...", end='\r')
+            features = self.extract_features_from_window(window)
+            X.append(features)
+        
+        X = np.array(X)
+        print(f"\n✅ Feature matrix shape: {X.shape}")
+        
+        # Store feature names for reference
+        self.feature_names = [
+            'hour', 'minute', 'weekday', 'is_night', 'is_sleep_time', 
+            'is_morning', 'is_evening',
+            'pressure_mean', 'pressure_std', 'pressure_min', 'pressure_max', 
+            'pressure_median', 'pressure_avg_change', 'pressure_max_increase',
+            'bed_occupancy_rate', 'bed_uncertain_rate',
+            'motion_rate', 'motion_bursts', 'max_motion_sequence',
+            'presence_near_rate', 'presence_far_rate', 'presence_absent_rate',
+            'presence_transitions',
+            'restless_rate', 'room_activity_rate', 'standing_still_rate',
+            'complete_absence_rate',
+            'state_consistency', 'state_diversity',
+            'sleeping_rate', 'restless_sleep_rate', 'room_empty_rate',
+            'sleep_time_active_rate', 'day_time_in_bed_rate'
+        ]
+        
+        self.training_session['feature_count'] = len(self.feature_names)
+        self.training_session['window_count'] = len(windows)
+        
+        return X
+    
+    def train_model(self, X):
+        """Train Isolation Forest model"""
+        print("\n🎯 Training Isolation Forest model...")
+        
+        # Handle NaN values
+        X = np.nan_to_num(X, nan=0, posinf=0, neginf=0)
+        
+        # Scale features
+        print("  Scaling features...")
+        X_scaled = self.scaler.fit_transform(X)
+        
+        # Train model
+        print(f"  Training with {self.n_estimators} estimators...")
+        self.model = IsolationForest(
+            contamination=self.contamination,
+            random_state=42,
+            n_estimators=self.n_estimators,
+            max_samples='auto',
+            max_features=1.0,
+            bootstrap=False,
+            n_jobs=-1
+        )
+        
+        self.model.fit(X_scaled)
+        
+        # Evaluate
+        predictions = self.model.predict(X_scaled)
+        scores = self.model.score_samples(X_scaled)
+        
+        n_normal = sum(predictions == 1)
+        n_anomalies = sum(predictions == -1)
+        
+        # Store metrics
+        self.training_session['training_metrics'] = {
+            'normal_samples': int(n_normal),
+            'anomaly_samples': int(n_anomalies),
+            'anomaly_rate': float(n_anomalies / len(predictions)),
+            'score_min': float(scores.min()),
+            'score_max': float(scores.max()),
+            'score_mean': float(scores.mean())
+        }
+        
+        print(f"\n✅ Model trained successfully!")
+        print(f"  Normal samples: {n_normal} ({n_normal/len(predictions)*100:.1f}%)")
+        print(f"  Anomalies: {n_anomalies} ({n_anomalies/len(predictions)*100:.1f}%)")
+        print(f"  Score range: [{scores.min():.3f}, {scores.max():.3f}]")
+        
+        return True
+    
+    def save_model(self):
+        """Save trained model with metadata"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Complete training session metadata
+        self.training_session['end_time'] = datetime.now().isoformat()
+        self.training_session['model_id'] = f"model_{timestamp}"
+        
+        # Main model file
+        model_filename = f"models/multi_sensor_model_{timestamp}.pkl"
+        model_data = {
+            'model': self.model,
+            'scaler': self.scaler,
+            'feature_names': self.feature_names,
+            'window_size': self.window_size,
+            'contamination': self.contamination,
+            'n_estimators': self.n_estimators,
+            'training_samples': len(self.training_data),
+            'timestamp': timestamp,
+            'model_type': 'multi_sensor',
+            'config_version': self.config['system_info']['version'],
+            'training_session': self.training_session
+        }
+        
+        joblib.dump(model_data, model_filename)
+        print(f"\n💾 Model saved: {model_filename}")
+        
+        # Save as latest
+        joblib.dump(model_data, "models/latest_multi_model.pkl")
+        print(f"💾 Also saved as: models/latest_multi_model.pkl")
+        
+        # Save training metadata separately
+        metadata_file = f"models/metadata_{timestamp}.json"
+        with open(metadata_file, 'w') as f:
+            json.dump(self.training_session, f, indent=2)
+        print(f"📝 Metadata saved: {metadata_file}")
+        
+        return model_filename
+    
+    def create_model_backup(self, model_filename):
+        """Create backup of trained model"""
+        if not self.config['backup_settings']['backup_on_training']:
+            return
+        
+        print("\n🔒 Creating model backup...")
+        
+        backup_dir = self.config['backup_settings']['backup_dir']
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Create backup package
+        backup_data = {
+            'backup_id': f"backup_{timestamp}",
+            'backup_date': datetime.now().isoformat(),
+            'original_model': os.path.basename(model_filename),
+            'model_metrics': self.training_session.get('training_metrics', {}),
+            'config_version': self.config['system_info']['version'],
+            'user_profile': self.config['user_profile'],
+            'training_info': {
+                'samples_used': len(self.training_data),
+                'window_size': self.window_size,
+                'feature_count': len(self.feature_names),
+                'contamination': self.contamination
+            }
+        }
+        
+        # Save backup metadata
+        backup_meta_file = os.path.join(backup_dir, f"backup_{timestamp}_metadata.json")
+        with open(backup_meta_file, 'w') as f:
+            json.dump(backup_data, f, indent=2)
+        
+        # Copy model file to backup
+        backup_model_file = os.path.join(backup_dir, f"backup_{timestamp}_model.pkl")
+        shutil.copy2(model_filename, backup_model_file)
+        
+        print(f"✅ Backup created: {backup_model_file}")
+        
+        # Manage backup rotation
+        self.rotate_backups()
+        
+        return backup_model_file
+    
+    def rotate_backups(self):
+        """Maintain maximum number of backups"""
+        backup_dir = self.config['backup_settings']['backup_dir']
+        max_backups = self.config['backup_settings']['max_backups']
+        
+        # List all backup files
+        backup_files = glob.glob(os.path.join(backup_dir, "backup_*_model.pkl"))
+        
+        if len(backup_files) > max_backups:
+            # Sort by creation time
+            backup_files.sort(key=os.path.getctime)
+            
+            # Remove oldest backups
+            to_remove = len(backup_files) - max_backups
+            for i in range(to_remove):
+                old_backup = backup_files[i]
+                old_metadata = old_backup.replace("_model.pkl", "_metadata.json")
+                
+                if os.path.exists(old_backup):
+                    os.remove(old_backup)
+                if os.path.exists(old_metadata):
+                    os.remove(old_metadata)
+                
+                print(f"  Removed old backup: {os.path.basename(old_backup)}")
+
+def main():
+    """Main training function"""
+    print("\n" + "="*60)
+    print("  ENHANCED ML MODEL TRAINING")
+    print("="*60)
+    
+    trainer = EnhancedMultiSensorTrainer("config.json")
+    
+    # Load data
+    if not trainer.load_training_data():
+        return
+    
+    # Check data sufficiency
+    min_samples = trainer.config['ml_parameters']['training']['min_samples_required']
+    if len(trainer.training_data) < min_samples:
+        print(f"\n⚠️ Warning: Only {len(trainer.training_data)} samples")
+        print(f"   Minimum recommended: {min_samples}")
+        proceed = input("Continue anyway? (y/n): ")
+        if proceed.lower() != 'y':
+            return
+    
+    # Prepare windows
+    X = trainer.prepare_training_windows()
+    
+    if len(X) < 50:
+        print(f"\n⚠️ Only {len(X)} windows available")
+        print("   Consider collecting more data")
+    
+    # Train model
+    if trainer.train_model(X):
+        # Save model
+        model_file = trainer.save_model()
+        
+        # Create backup
+        backup_file = trainer.create_model_backup(model_file)
+        
+        print("\n" + "="*60)
+        print("✅ TRAINING COMPLETE!")
+        print("="*60)
+        print(f"\n📊 Model Performance:")
+        metrics = trainer.training_session['training_metrics']
+        print(f"   Anomaly detection rate: {metrics['anomaly_rate']*100:.1f}%")
+        print(f"   Score range: [{metrics['score_min']:.3f}, {metrics['score_max']:.3f}]")
+        
+        print(f"\n📁 Files Created:")
+        print(f"   Model: {model_file}")
+        print(f"   Backup: {backup_file}")
+        
+        print(f"\n🚀 Next Steps:")
+        print("   1. Test: Run enhanced_mqtt_detector.py")
+        print("   2. Deploy: Model is ready for production use")
+
+if __name__ == "__main__":
+    main()
