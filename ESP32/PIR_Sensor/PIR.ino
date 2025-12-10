@@ -1,117 +1,78 @@
-#include <WiFi.h>
-#include <PubSubClient.h>
+// Configurtion 
+const int PIR_PIN = 2; // GPIO pin where the PIR sensor data output is connected
+const long DEBOUNCE_DELAY_MS = 2000; // 2 seconds to ignore rapid multiple triggers
 
-// Configuration, update for WiFi
-const char* ssid = "iPhone";            // Your WiFi Network Name
-const char* password = "hotspot1";      // Your WiFi Password
-const char* mqtt_server = "X.X.X.X";    // Raspberry Pi IP Address (e.g., "172.20.10.2")
+// Globals 
+bool lastPIRState = LOW; // Tracks the sensor's raw previous reading (HIGH/LOW)
+long lastMotionTime = 0; // Timestamp of the last confirmed state change
+long lastPrintTime = 0; // Timestamp of the last time we printed the status (for heartbeat)
 
-const char* mqtt_client_id = "ESP32_PIR_State_Toggle"; 
-const char* mqtt_publish_topic = "home/room/presence_status"; 
-const int PIR_PIN = 16;                 // GPIO pin where the PIR sensor is connected
-
-// State Definitions
-enum RoomState {
-    OUT = 0,
-    IN = 1
-};
-
-//Global and Objects 
-WiFiClient espClient;
-PubSubClient client(espClient);
-
-RoomState currentRoomState = OUT;
-bool lastPIRState = LOW; // Tracks the sensor's previous reading (HIGH/LOW)
-long lastMotionTime = 0;
-const long debounceDelay = 3000; // 3 seconds to ignore rapid multiple triggers
-
-//Restore missing WiFi
-void setup_wifi() {
-    delay(10);
-    Serial.print("Connecting to ");
-    Serial.println(ssid);
+// Setup 
+void setup() {
+    // Start the primary serial communication (USB Monitor)
+    Serial.begin(115200); 
     
-    WiFi.begin(ssid, password);
+    // Set the PIR pin as an input
+    pinMode(PIR_PIN, INPUT); 
     
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
-
-    Serial.println("");
-    Serial.println("WiFi connected");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
+    Serial.println("PIR Sensor Serial Monitor Initialized.");
+    Serial.print("PIR Sensor connected to GPIO: ");
+    Serial.println(PIR_PIN);
+    Serial.println("Waiting for motion...");
 }
 
-//Restoring MQTT logic 
-void reconnect() {
-    while (!client.connected()) {
-        Serial.print("Attempting MQTT connection...");
-        
-        if (client.connect(mqtt_client_id)) {
-            Serial.println("connected to broker!");
-            client.publish("home/status", "ESP32 PIR State Online");
-        } else {
-            Serial.print("failed, rc=");
-            Serial.print(client.state());
-            Serial.println(" trying again in 5 seconds");
-            delay(5000);
-        }
-    }
-}
-
-//Main PIR Logic 
-void handleMotionDetection() {
+// Main Loop 
+void loop() {
     long currentTime = millis();
     
-    // Read the current state of the PIR sensor
+    // Read the current state of the PIR sensor pin
     bool currentPIRState = digitalRead(PIR_PIN);
 
-    // Trigger Logic: Rising edge detection AND debounce check
-    if (currentPIRState == HIGH && lastPIRState == LOW && (currentTime - lastMotionTime > debounceDelay)) {
+    // Motion Detect Start 
+    // Check if the state has changed from LOW to HIGH (Motion Detected)
+    if (currentPIRState == HIGH && lastPIRState == LOW) {
         
-        lastMotionTime = currentTime; // Reset the timer
-        
-        // Toggle the Room State
-        if (currentRoomState == OUT) {
-            currentRoomState = IN;
-            Serial.println(">>> State Change: IN (Person walked in)");
-            client.publish(mqtt_publish_topic, "IN");
-        } else {
-            currentRoomState = OUT;
-            Serial.println(">>> State Change: OUT (Person walked out)");
-            client.publish(mqtt_publish_topic, "OUT");
+        // Only register a new event if the debounce delay has passed
+        if (currentTime - lastMotionTime > DEBOUNCE_DELAY_MS) {
+            
+            lastMotionTime = currentTime; // Reset the motion timer
+            lastPrintTime = currentTime;  // Force immediate print
+            
+            Serial.print("[");
+            Serial.print(currentTime);
+            Serial.println("] >>> MOTION DETECTED (State: HIGH)");
         }
     }
-
-    // Update the last known state for the next loop iteration
-    lastPIRState = currentPIRState;
-}
-
-//Setup and Loop 
-void setup() {
-    Serial.begin(115200); 
-    pinMode(PIR_PIN, INPUT); // Set PIR pin as input
     
-    Serial.println("PIR State Toggle Initialized.");
-    
-    // Calls the restored function
-    setup_wifi(); 
-    client.setServer(mqtt_server, 1883); 
-    
-    Serial.print("Initial State: ");
-    Serial.println(currentRoomState == IN ? "IN" : "OUT");
-}
-
-void loop() {
-    // Calls the restored function
-    if (!client.connected()) {
-        reconnect(); 
+    // Motion Detect End 
+    // Check if the state has changed from HIGH to LOW (Motion Ended/No Motion)
+    else if (currentPIRState == LOW && lastPIRState == HIGH) {
+        
+        // This check ensures the sensor has been quiet for the debounce period
+        // before confirming the "No Motion" state.
+        if (currentTime - lastMotionTime > DEBOUNCE_DELAY_MS) {
+            
+            lastPrintTime = currentTime; // Force immediate print
+            
+            Serial.print("[");
+            Serial.print(currentTime);
+            Serial.println("] >>> MOTION ENDED (State: LOW)");
+        }
     }
-    client.loop(); 
+    
+    // Periodic Heartbeart 
+    // Prints the current raw state every 5 seconds for confirmation, even if nothing changes.
+    if (currentTime - lastPrintTime > 5000) {
+        Serial.print("[");
+        Serial.print(currentTime);
+        Serial.print("] Raw State: ");
+        Serial.println(currentPIRState ? "HIGH (Motion)" : "LOW (No Motion)");
+        lastPrintTime = currentTime;
+    }
 
-    handleMotionDetection();
-
-    delay(50); // Small loop delay
+    // Update the last known raw state for the next loop iteration
+    lastPIRState = currentPIRState;
+    
+    // Keep the loop running very fast to catch the state change immediately
+    delay(50); 
 }
