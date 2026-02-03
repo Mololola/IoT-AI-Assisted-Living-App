@@ -1,0 +1,22 @@
+/*
+ * Grove Water Sensor Test Script
+ */
+
+const int waterSensorPin = 32; 
+int sensorValue = 0;
+
+void setup() {
+  Serial.begin(115200);
+  analogSetAttenuation(ADC_11db); // Set for 0-3.3V range
+  Serial.println("Water Sensor Test: Submerge sensor slightly to see values.");
+}
+
+void loop() {
+  sensorValue = analogRead(waterSensorPin);
+  
+  // Plotter labels
+  Serial.print("Water_Level:");
+  Serial.println(sensorValue);
+  
+  delay(100); 
+}
