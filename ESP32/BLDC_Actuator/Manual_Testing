@@ -1,0 +1,48 @@
+#include <Stepper.h>
+
+// Configuration 
+const int STEPS_PER_REV = 2048; 
+
+// Pins 18, 21, 19, 22 
+Stepper myStepper(STEPS_PER_REV, 18, 21, 19, 22);
+
+void setup() {
+  myStepper.setSpeed(14); 
+  Serial.begin(115200);
+  
+  // Set pins as output
+  pinMode(18, OUTPUT);
+  pinMode(19, OUTPUT);
+  pinMode(21, OUTPUT);
+  pinMode(22, OUTPUT);
+
+  Serial.println("Blind Actuator Ready ");
+  Serial.println("Type 'O' to Open, 'C' to Close");
+}
+
+void loop() {
+  if (Serial.available() > 0) {
+    char command = Serial.read();
+
+    if (command == 'O' || command == 'o') {
+      Serial.println("Command Received: OPENING...");
+      myStepper.step(STEPS_PER_REV * 2); // Rotate 2 full turns
+      disableMotor();
+    } 
+    else if (command == 'C' || command == 'c') {
+      Serial.println("Command Received: CLOSING...");
+      myStepper.step(-STEPS_PER_REV * 2); // Rotate 2 turns back
+      disableMotor();
+    }
+  }
+}
+
+// CRITICAL for Battery Power: 
+// This stops the motor from drawing 200mA while sitting still.
+void disableMotor() {
+  digitalWrite(18, LOW);
+  digitalWrite(19, LOW);
+  digitalWrite(21, LOW);
+  digitalWrite(22, LOW);
+  Serial.println("Energy Saving Mode: Motor Coils De-energized.");
+}
