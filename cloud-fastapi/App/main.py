@@ -3,8 +3,8 @@ from fastapi import FastAPI
 from fastapi import HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timezone
+from routes_models_alerts import router as models_alerts_router
 import mongo
-from .routes_models_alerts import router as models_alerts_router
 
 app.include_router(models_alerts_router)
 
