@@ -6,9 +6,6 @@ from datetime import datetime, timezone
 from routes_models_alerts import router as models_alerts_router
 import mongo
 
-app.include_router(models_alerts_router)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     mongo.connect()
@@ -22,6 +19,8 @@ async def lifespan(app: FastAPI):
         mongo.close()
 
 app = FastAPI(lifespan=lifespan)
+
+app.include_router(models_alerts_router)
 
 @app.get("/health")
 async def health():
