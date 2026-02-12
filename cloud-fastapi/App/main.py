@@ -4,6 +4,10 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timezone
 import mongo
+from .routes_models_alerts import router as models_alerts_router
+
+app.include_router(models_alerts_router)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
