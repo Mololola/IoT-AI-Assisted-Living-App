@@ -5,7 +5,7 @@ from bson import ObjectId
 import base64
 
 import mongo
-from schemas import ModelIn, ModelOut, AlertIn, AlertOut
+import schemas
 
 router = APIRouter()
 
@@ -19,8 +19,8 @@ def to_oid(id: str) -> ObjectId:
 # MODELS
 # -------------------------
 
-@router.post("/models", response_model=ModelOut)
-async def upload_model(payload: ModelIn):
+@router.post("/models", response_model=schemas.ModelOut)
+async def upload_model(payload: schemas.ModelIn):
     db = mongo.db()
 
     # validate ISO datetime string
@@ -52,7 +52,7 @@ async def upload_model(payload: ModelIn):
         "notes": m.get("notes"),
     }
 
-@router.get("/models", response_model=List[ModelOut])
+@router.get("/models", response_model=List[schemas.ModelOut])
 async def list_models(limit: int = Query(50, ge=1, le=500)):
     db = mongo.db()
     cursor = db["models"].find({}, sort=[("created_at", -1)]).limit(limit)
@@ -70,7 +70,7 @@ async def list_models(limit: int = Query(50, ge=1, le=500)):
         })
     return out
 
-@router.get("/models/latest", response_model=ModelOut)
+@router.get("/models/latest", response_model=schemas.ModelOut)
 async def latest_model():
     db = mongo.db()
     m = await db["models"].find_one({}, sort=[("created_at", -1)])
@@ -110,8 +110,8 @@ async def download_model(id: str):
 # ALERTS
 # -------------------------
 
-@router.post("/alerts", response_model=AlertOut)
-async def create_alert(payload: AlertIn):
+@router.post("/alerts", response_model=schemas.AlertOut)
+async def create_alert(payload: schemas.AlertIn):
     db = mongo.db()
 
     try:
@@ -140,7 +140,7 @@ async def create_alert(payload: AlertIn):
         "created_at": a["created_at"],
     }
 
-@router.get("/alerts", response_model=List[AlertOut])
+@router.get("/alerts", response_model=List[schemas.AlertOut])
 async def list_alerts(
     severity: Optional[str] = None,
     acknowledged: Optional[bool] = None,
@@ -179,7 +179,7 @@ async def list_alerts(
         })
     return out
 
-@router.get("/alerts/{id}", response_model=AlertOut)
+@router.get("/alerts/{id}", response_model=schemas.AlertOut)
 async def get_alert(id: str):
     db = mongo.db()
     a = await db["alerts"].find_one({"_id": to_oid(id)})
@@ -200,7 +200,7 @@ async def get_alert(id: str):
         "created_at": a["created_at"],
     }
 
-@router.put("/alerts/{id}/acknowledge", response_model=AlertOut)
+@router.put("/alerts/{id}/acknowledge", response_model=schemas.AlertOut)
 async def acknowledge_alert(id: str):
     db = mongo.db()
     _id = to_oid(id)
