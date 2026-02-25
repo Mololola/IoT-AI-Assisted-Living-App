@@ -1,0 +1,74 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+// 1. Configuration 
+const char* ssid = "IoT-Lab";            // Your WiFi Network Name
+const char* password = "ELEC423_2526!";      // Your WiFi Password
+const char* mqtt_server = "192.168.1.101";  
+const char* mqtt_client_id = "ESP32_bedroom_pressure)"; 
+const char* mqtt_publish_topic = "home/bedroom/pressure"; // Call on RaspberryPi 
+
+const int pressurePin = 33;    // Analog input pin
+const int threshold = 40;      // Minimum change to trigger a print/publish
+int lastPressure = 0;          // Value of the last successful transmission
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+void setup_wifi() {
+  Serial.print("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected");
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    if (client.connect("ESP32_bedroom_pressure")) {
+      Serial.println("MQTT Connected");
+    } else {
+      delay(5000);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+  
+  // Set ADC to 12-bit resolution (0-4095)
+  analogReadResolution(12);
+  Serial.println("Pressure Monitor Active. Reporting changes only...");
+}
+
+void loop() {
+  if (!client.connected()) reconnect();
+  client.loop();
+
+  // 1. Read the raw ADC value (0-4095)
+  int rawValue = analogRead(pressurePin);
+  
+  // 2. Map the value to your 0-5000 range
+  int currentPressure = map(rawValue, 0, 4095, 0, 5000);
+
+  // 3. Delta Check: Only proceed if change > threshold
+  if (abs(currentPressure - lastPressure) >= threshold) {
+    
+    // Print the specific value to Serial
+    Serial.print("Change Detected! New Pressure: ");
+    Serial.println(currentPressure);
+
+    // Publish to MQTT
+    String payload = String(currentPressure);
+    client.publish("home/bedroom/pressure", payload.c_str());
+
+    // Update the last known value for next comparison
+    lastPressure = currentPressure;
+  }
+
+  delay(100); // 10Hz sampling rate is standard for pressure mats
+}
