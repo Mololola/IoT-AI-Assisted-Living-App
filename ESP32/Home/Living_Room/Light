@@ -67,10 +67,10 @@ void setup_wifi() {
 
 void reconnect() {
   while (!client.connected()) {
-    if (client.connect("ESP32_Light_Node")) {
+    if (client.connect("ESP32_livingroom_light")) {
       // Re-send state upon reconnection to ensure Pi is synced
       String payload = isDaytime ? "Day" : "Night";
-      client.publish("home/livingroom/light_status", payload.c_str());
+      client.publish("home/livingroom/light", payload.c_str());
     } else {
       delay(5000);
     }
