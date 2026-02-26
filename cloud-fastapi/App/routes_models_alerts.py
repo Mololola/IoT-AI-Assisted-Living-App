@@ -3,6 +3,7 @@ from typing import Optional, List
 from datetime import datetime
 from bson import ObjectId
 import base64
+import firebase_push
 
 import mongo
 import schemas
@@ -124,6 +125,10 @@ async def create_alert(payload: schemas.AlertIn):
     doc["acknowledged_at"] = datetime.utcnow() if payload.acknowledged else None
 
     res = await db["alerts"].insert_one(doc)
+    
+    #Trigger Firebase push notification
+    firebase_push.send_alert_notification(doc)
+    
     a = await db["alerts"].find_one({"_id": res.inserted_id})
 
     return {
