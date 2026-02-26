@@ -5,6 +5,8 @@ from pydantic import BaseModel
 from datetime import datetime, timezone
 from routes_models_alerts import router as models_alerts_router
 import mongo
+import firebase_push
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -14,6 +16,11 @@ async def lifespan(app: FastAPI):
         database = mongo.db()
         await database.command("ping")
         print("MongoDB ping ok")
+        
+        # Initialize Firebase Admin
+        firebase_push.init_firebase()
+        print("Firebase initialized")
+        
         yield
     finally:
         mongo.close()
