@@ -1,0 +1,255 @@
+#include <stdlib.h> 
+#include <WiFi.h>
+#include <WiFiClientSecure.h> 
+#include <PubSubClient.h> 
+#include "esp_wifi.h" 
+#include <time.h>
+
+// --- 1. CONFIGURATION ---
+const char* ssid = "IoT-Lab";            
+const char* password = "ELEC423_2526!";      
+const char* mqtt_server = "192.168.1.101";   
+
+// CRUCIAL: Must match the Common Name (CN) generated on the Pi
+const char* mqtt_client_id = "ESP32_hallway_presence"; 
+const char* mqtt_publish_topic = "home/hallway/presence"; 
+
+const float CHANGE_THRESHOLD_CM = 5.0; 
+float lastPublishedDistance = -999.0; 
+
+// --- HMMD SERIAL PINS ---
+#define RX1_PIN 18
+#define TX1_PIN 19
+#define HMMD_BAUDRATE 115200 
+
+String hex_to_send = "FDFCFBFA0800120000006400000004030201"; 
+HardwareSerial HMMDSerial(1); 
+
+// --- 2. MUTUAL TLS CREDENTIALS ---
+
+// 2a. The Root CA
+const char* root_ca = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDjzCCAnegAwIBAgIUPkCaskkmR6eJH1JlZyUTGyf2HAQwDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAyMjcwOTUwNDZaFw0zNjAyMjUwOTUwNDZaMFcxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxEDAOBgNVBAMMB01FTkdfQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+AoIBAQCk+nF0+rE0hT+iqftqnpSiK9h8PuFzhGAIZn5CLNUhhoDQ8z+h/34NETXD
+6VMBOJV/9LsTEk5HPCtA0G+xEi/8r9RlIG+bzY3JtTaMnVlZkaHsj9H5oHRlcAoo
+ygb7DdOri8SFmwglPt1Ehhp1VtgoxfZjqVTX+TJw/+CFsSki5L8t3PZHVfVXddlb
+LMDZ3HYbfytram0ajLSjNdc9VUCtXKXTXPMXFAKXF3kLdjLTVL7kqOqL8p6bJdcE
+/z1c/aVZ7wSHyQxdv4IZxGUX6W6TlG20W7ctO3ZRpx+n4o7+Wg3x64g+IqAr/MYf
+3cVGS93b/DFe20+HfLLtFdnNmFXVAgMBAAGjUzBRMB0GA1UdDgQWBBSwjLA0RgzF
+He54i9GWLKbkD4P1cTAfBgNVHSMEGDAWgBSwjLA0RgzFHe54i9GWLKbkD4P1cTAP
+BgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAt/6aVsCt4PwzthXLF
+aVc9v3CfvYVBQNmf33fYu6+ftkDRS5ja0mPVOEKYhjEW4g1o7pQIVzYpSN5RkXzv
+0elFCT8n9sQNTI2gOY5oG/HES/wQcGFvnXni5g7z2ZIu6zHr67qJsWlHuwMAVqIA
+5E5XZDDBeEhWEb7yfc3Gr4GXoPP6UPwoZNCjZDMrw209TTvxdLUL2i7c0aBLPeEU
+ScNdhCaN2fJWlmvB6OmN70TnC1rDwUDxKxKdHiv0TaW7i8G/fw7yeCajxmUTcoWR
+FRk5rhbIJ/mAIR20PdUjzvsDza3FIVTlThvZo6t8fQrVTzTZHrg30/zKo8K6YtZ6
+tSmw
+-----END CERTIFICATE------
+)EOF";
+
+// 2b. The Presence Client Certificate
+const char* client_cert = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDjTCCAnWgAwIBAgIUdKrpQl0A3VnP8WR/WeoleuRttKMwDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAzMDEyMDA2NTNaFw0zNjAyMjcyMDA2NTNaMGYxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxHzAdBgNVBAMMFkVTUDMyX2hhbGx3YXlfcHJlc2VuY2UwggEiMA0GCSqGSIb3
+DQEBAQUAA4IBDwAwggEKAoIBAQDwlmm1VWzAMslmNpg6+qTEynDxu/WrtpGPSEbH
+SS12Ech7gJ2baxrHUIzebumMiR/FzRAXSNNdeNXyMnQgF9XiejZxQwCoJkYklFzJ
+ILcuSx1BkJFld1lVBKWAKTKTk7DiwpUxLuoJvb9+WCXLOKbdxNbfW8gWWUfFUtx/
+X8XPjN26gc2rubQ16/4/0l2263fuN6OSLaaHe+b4KPVjcr6CsHE9vjL39V1m3IbJ
+JPWGYTAN6KprXFjSeBRryqD1aNcWupeCcOyBtqExPmhbgrooVlzqCroR8mKHy4YU
+si0UaDakvN7eEoPEZ8HTYRSxvn6y5ZNFRAoRTWKqyJDO/oT/AgMBAAGjQjBAMB0G
+A1UdDgQWBBSHM99kozwIUPr6bOTRJAcvCQiONTAfBgNVHSMEGDAWgBSwjLA0RgzF
+He54i9GWLKbkD4P1cTANBgkqhkiG9w0BAQsFAAOCAQEAfqNjAJnopGvGo4YdZMCZ
+FmsszmMepYcgjCasL45A/0dl342QKW3ZygKGiBOsBvzkdKJv9VlrMRAgBIWX/UfH
+24RZpMwlxERmG7eRCJAQhbd5mwdc3WyWw3zbFMaWlBvW5mRdWubLRYFNM6rgFyNy
+lC03YvpsoEa5TLue3siM4Lv6OhnSIjZGlqzSpn0dwZS/MiLiS46iyY9X7gVj5GUJ
+KP+8lKV/FwF8t4WyQBeUWjdTICk+gTeaFEkWjvNbhNHmGW1ytLHqzgDHJgQPjesw
+EzzZtiZQpmGQICTNcgy1yRTJnIS1TjAcU5Xxwn7pBEF3frLKaQBVlBxwJ5WBKDDS
+5g==
+-----END CERTIFICATE-----
+)EOF";
+
+// 2c. The Presence Client Private Key
+// MUST MANUALLY ADD 'RSA' TO THE HEADER AND FOOTER
+const char* client_key = R"EOF(
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDwlmm1VWzAMslm
+Npg6+qTEynDxu/WrtpGPSEbHSS12Ech7gJ2baxrHUIzebumMiR/FzRAXSNNdeNXy
+MnQgF9XiejZxQwCoJkYklFzJILcuSx1BkJFld1lVBKWAKTKTk7DiwpUxLuoJvb9+
+WCXLOKbdxNbfW8gWWUfFUtx/X8XPjN26gc2rubQ16/4/0l2263fuN6OSLaaHe+b4
+KPVjcr6CsHE9vjL39V1m3IbJJPWGYTAN6KprXFjSeBRryqD1aNcWupeCcOyBtqEx
+PmhbgrooVlzqCroR8mKHy4YUsi0UaDakvN7eEoPEZ8HTYRSxvn6y5ZNFRAoRTWKq
+yJDO/oT/AgMBAAECggEABgPvawTEYbdm6n9HEJEd3sLdQGfTFIEUzrtfghykHkrm
+waEYHfGFq35xCebwlWkghNr1qRdhG8EF3GiRF4JUnPxOf50/bJFQ3KgOGL0QnMbe
+y1ZfvSvlJi6JgQaNyK1iuOKB0+PRrXCQKOAoyU7UswdcLuPUMvNLvV/LZT0D12oa
+VZ+Cl1SRKPC/qQgbaRViDA3xD2SyOcGa4zwZqRYFifNNlTRSrtVvGehckdeZM0Fa
+2UlfetE7/7g11MxVKwk+FGlZlcZeftsiNROdlb5KrsvN9aIozKnRx5ZZ3xoRZAvd
+ofR1pT4Y5NZDEq5AzTf1vx3fDcq7WwgSZtr7Ls+54QKBgQD5XjN1aR8cTR7mbBf5
+aRmPoe5/7Mv1JL5xqIB0iFp5wzO1BH/PWzAxU5xX2bHdm/q+ACHjcOo0CHDe9nV0
+LyqAv0KigKkHqgwJfpLADhJC1wmoD7AX6d7f0/+8wGxsTgfsctBark8iqvGLkosQ
+pZwrL1IGRZ08VtiLik9UzxGD4QKBgQD2/G5j97XZLXYKOdobWX3Ig9X63HBKXkMM
+CYn31JvdMHdU2bBreAVDOwsGe75oLgw7iJT3vo8cEtMbXdrymWkraA6q1spBgPBJ
+iGUGZGykLTH1u5WPV1fcgXPGUyUaJYYAA4s/YQ8nzt9TRw9u3GiMXqK4yXS3s8Iv
+PkDu/lEk3wKBgQCi5FAE8CgsWoxGxHFcsLTLyGF9GveYKOpmYEWY2cEQLNzH8Cp1
+DwIKFq3YDRJMyqkeGAQLCCVU2/avDptmy7Cd7VHfyN+hbAj04sOFxStUkhdyutyy
+oki+OUOizqeEj+xJHi7QLXDwGm4yWAWTWDsNUpnoEu1FDw3hCPYNVj4AwQKBgEki
+alWzredHLOLOSqU6lKJhV2VXDPEYhGX2FSKLlDOk/FDlvPW1rmk//H3I+pLCv+CJ
+CwNpK9s2P8ikvAaGIrw1rdIsk+tdkMlVWATSi9D5iQeoqhqt1Fh5BJ0/VYcugUVT
+x1HXHbO98CcqrYk4PsUB6NEq5iLXWbK/jl62c7SlAoGABrgbhRTB+nZVP/Udt+2L
+Bf5szIJo1vM7qBR981bQPZdHsnWhAk5qaWjAxUau37jUqGXyhGBy4m+xf3XyEE7i
+si1jtseXGk5f+ueTLNlmbrcWnxpCEjuYbo62omPLGuRyFig7GJUKCXKtm4vNpQRq
+XfeVIFXQAxwfyWH2QI6jr4Y=
+-----END PRIVATE KEY-----
+)EOF";
+
+WiFiClientSecure espClient;          
+PubSubClient client(espClient); 
+
+// --- 3. HELPER FUNCTIONS ---
+
+void syncTime() {
+    configTime(0, 0, "pool.ntp.org", "time.google.com");
+    Serial.print("Syncing Clock for TLS (May take longer at 80MHz): ");
+    time_t now = time(nullptr);
+    while (now < 1672531200) { 
+        delay(500);
+        Serial.print(".");
+        now = time(nullptr);
+    }
+    Serial.println("\n[OK] Time Synced.");
+}
+
+void setup_wifi() {
+    delay(10);
+    Serial.println("Connecting to WiFi...");
+
+    WiFi.setSleep(true); 
+    WiFi.begin(ssid, password);
+    
+    int retry_count = 0;
+    while (WiFi.status() != WL_CONNECTED && retry_count < 20) {
+        delay(500);
+        Serial.print(".");
+        retry_count++;
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+       WiFi.setTxPower(WIFI_POWER_8_5dBm); 
+       Serial.println("\nWiFi connected.");
+    } else {
+       Serial.println("\nWiFi Failed to Connect");
+    }
+}
+
+void reconnect() {
+    if (!client.connected()) {
+        Serial.print("Attempting STRICT mTLS connection...");
+        if (client.connect(mqtt_client_id)) {
+            Serial.println("CONNECTED SECURELY!");
+        } else {
+            Serial.print("failed, rc=");
+            Serial.print(client.state());
+            delay(2000); 
+        }
+    }
+}
+
+void sendHexData(String hexString) {
+    int hexStringLength = hexString.length();
+    if (hexStringLength % 2 != 0) return;
+ 
+    int byteCount = hexStringLength / 2;
+    byte hexBytes[byteCount];
+    for (int i = 0; i < hexStringLength; i += 2) {
+        String byteString = hexString.substring(i, i + 2);
+        byte hexByte = (byte)strtoul(byteString.c_str(), NULL, 16);
+        hexBytes[i / 2] = hexByte;
+    }
+    HMMDSerial.write(hexBytes, byteCount); 
+}
+
+void readAndPublishData() {
+    if (HMMDSerial.available() > 0) {
+        String line = HMMDSerial.readStringUntil('\n');
+        line.trim();
+
+        if (line.startsWith("Range ")) {
+            String distanceStr = line.substring(6); 
+            float currentDistance = distanceStr.toFloat();
+            
+            float diff = abs(currentDistance - lastPublishedDistance);
+
+            if (diff >= CHANGE_THRESHOLD_CM) {
+                if (!client.connected()) reconnect();
+
+                if (client.connected()) {
+                    char payload[10];
+                    dtostrf(currentDistance, 5, 2, payload); 
+                    
+                    client.publish(mqtt_publish_topic, payload);
+                    
+                    Serial.print(">>> SECURE CHANGE DETECTED (");
+                    Serial.print(diff);
+                    Serial.print("cm) | Sent: ");
+                    Serial.println(payload);
+
+                    lastPublishedDistance = currentDistance;
+                }
+            }
+        }
+    }
+}
+
+// --- 4. SETUP & LOOP ---
+
+void setup() {
+    // Power Saving: Drop CPU Speed to 80MHz
+    setCpuFrequencyMhz(80); 
+
+    Serial.begin(115200); 
+    
+    unsigned long startAttemptTime = millis();
+    while (!Serial && millis() - startAttemptTime < 2000) { delay(100); }
+    
+    setup_wifi(); 
+    syncTime();
+
+    // Load Security Trio
+    espClient.setCACert(root_ca);
+    espClient.setCertificate(client_cert);
+    espClient.setPrivateKey(client_key);
+    
+    // Increased timeout to 60s because 80MHz CPU handles RSA math slower
+    espClient.setHandshakeTimeout(60); 
+
+    client.setServer(mqtt_server, 8883); // Secure Port
+    
+    HMMDSerial.begin(HMMD_BAUDRATE, SERIAL_8N1, RX1_PIN, TX1_PIN);
+    Serial.println("Sensor Serial Initialized");
+    
+    Serial.println("Sending Config Hex...");
+    sendHexData(hex_to_send);
+    
+    delay(2000); 
+    Serial.println("System Ready: Securely reporting on 5cm changes.");
+}
+    
+void loop() {
+    if (client.connected()) {
+        client.loop(); 
+    }
+
+    readAndPublishData();
+    
+    delay(20);
+}
