@@ -1,1 +1,143 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h> 
+#include <PubSubClient.h>
+#include <time.h> 
 
+// --- 1. CONFIGURATION --- 
+const char* ssid = "IoT-Lab";             
+const char* password = "ELEC423_2526!";       
+const char* mqtt_server = "192.168.1.101";  
+
+// CRUCIAL: Must match the Common Name (CN) generated on the Pi
+const char* mqtt_client_id = "ESP32_livingroom_pressure"; 
+const char* mqtt_publish_topic = "home/livingroom/pressure";  
+
+const int pressurePin = 33;    
+const int threshold = 40;      
+int lastPressure = 0;          
+
+// --- 2. MUTUAL TLS CREDENTIALS ---
+
+// 2a. The Root CA (Same as the bedroom sensor)
+const char* root_ca = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDjzCCAnegAwIBAgIUPkCaskkmR6eJH1JlZyUTGyf2HAQwDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAyMjcwOTUwNDZaFw0zNjAyMjUwOTUwNDZaMFcxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxEDAOBgNVBAMMB01FTkdfQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+AoIBAQCk+nF0+rE0hT+iqftqnpSiK9h8PuFzhGAIZn5CLNUhhoDQ8z+h/34NETXD
+6VMBOJV/9LsTEk5HPCtA0G+xEi/8r9RlIG+bzY3JtTaMnVlZkaHsj9H5oHRlcAoo
+ygb7DdOri8SFmwglPt1Ehhp1VtgoxfZjqVTX+TJw/+CFsSki5L8t3PZHVfVXddlb
+LMDZ3HYbfytram0ajLSjNdc9VUCtXKXTXPMXFAKXF3kLdjLTVL7kqOqL8p6bJdcE
+/z1c/aVZ7wSHyQxdv4IZxGUX6W6TlG20W7ctO3ZRpx+n4o7+Wg3x64g+IqAr/MYf
+3cVGS93b/DFe20+HfLLtFdnNmFXVAgMBAAGjUzBRMB0GA1UdDgQWBBSwjLA0RgzF
+He54i9GWLKbkD4P1cTAfBgNVHSMEGDAWgBSwjLA0RgzFHe54i9GWLKbkD4P1cTAP
+BgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAt/6aVsCt4PwzthXLF
+aVc9v3CfvYVBQNmf33fYu6+ftkDRS5ja0mPVOEKYhjEW4g1o7pQIVzYpSN5RkXzv
+0elFCT8n9sQNTI2gOY5oG/HES/wQcGFvnXni5g7z2ZIu6zHr67qJsWlHuwMAVqIA
+5E5XZDDBeEhWEb7yfc3Gr4GXoPP6UPwoZNCjZDMrw209TTvxdLUL2i7c0aBLPeEU
+ScNdhCaN2fJWlmvB6OmN70TnC1rDwUDxKxKdHiv0TaW7i8G/fw7yeCajxmUTcoWR
+FRk5rhbIJ/mAIR20PdUjzvsDza3FIVTlThvZo6t8fQrVTzTZHrg30/zKo8K6YtZ6
+tSmw
+-----END CERTIFICATE-----
+)EOF";
+
+// 2b. The Living Room Client Certificate
+const char* client_cert = R"EOF(
+-----BEGIN CERTIFICATE-----
+[PASTE livingroom_client.crt HERE]
+-----END CERTIFICATE-----
+)EOF";
+
+// 2c. The Living Room Client Private Key (Ensure it says RSA PRIVATE KEY)
+const char* client_key = R"EOF(
+-----BEGIN RSA PRIVATE KEY-----
+[PASTE livingroom_client.key HERE]
+-----END RSA PRIVATE KEY-----
+)EOF";
+
+WiFiClientSecure espClient; 
+PubSubClient client(espClient);
+
+// --- 3. HELPER FUNCTIONS ---
+
+void syncTime() {
+  configTime(0, 0, "pool.ntp.org", "time.google.com");
+  Serial.print("Syncing Clock: ");
+  time_t now = time(nullptr);
+  while (now < 1672531200) { // Wait for year >= 2023
+    delay(500);
+    Serial.print(".");
+    now = time(nullptr);
+  }
+  Serial.println("\n[OK] Time Synced.");
+}
+
+void setup_wifi() {
+  Serial.print("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected");
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Attempting STRICT mTLS connection...");
+    if (client.connect(mqtt_client_id)) {
+      Serial.println("CONNECTED SECURELY!");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" - Retrying in 5s...");
+      delay(5000);
+    }
+  }
+}
+
+// --- 4. SETUP AND LOOP ---
+
+void setup() {
+  Serial.begin(115200);
+  setup_wifi();
+  syncTime();
+  
+  // Load the Security Trio
+  espClient.setCACert(root_ca); 
+  espClient.setCertificate(client_cert); 
+  espClient.setPrivateKey(client_key);   
+  
+  // ESP32 v3.0 Handshake fix
+  espClient.setHandshakeTimeout(45); 
+
+  client.setServer(mqtt_server, 8883); // Secure Port
+  
+  analogReadResolution(12);
+  Serial.println("Living Room Secure Monitor Active.");
+}
+
+void loop() {
+  if (!client.connected()) reconnect();
+  client.loop();
+
+  int rawValue = analogRead(pressurePin);
+  int currentPressure = map(rawValue, 0, 4095, 0, 5000);
+
+  if (abs(currentPressure - lastPressure) >= threshold) {
+    String payload = String(currentPressure);
+    
+    // Fixed: Now uses the variable instead of a hardcoded string
+    if (client.publish(mqtt_publish_topic, payload.c_str())) {
+        Serial.print("Secure Data Sent -> Living Room Pressure: ");
+        Serial.println(payload);
+        lastPressure = currentPressure;
+    } else {
+        Serial.println("Secure Publish Failed!");
+    }
+  }
+  delay(100); 
+}
