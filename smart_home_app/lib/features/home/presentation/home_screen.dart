@@ -1,6 +1,10 @@
+// FILE: lib/features/home/presentation/home_screen.dart
+// Updated: Added Alerts tab between Sensors and Routines
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../sensors/presentation/sensors_tab.dart';
+import '../../alerts/presentation/alerts_tab.dart';
 import '../../routines/presentation/routines_tab.dart';
 import '../../settings/presentation/settings_tab.dart';
 
@@ -14,7 +18,13 @@ class HomeScreen extends ConsumerStatefulWidget {
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   int _currentIndex = 0;
 
-  final List<Widget> _tabs = const [SensorsTab(), RoutinesTab(), SettingsTab()];
+  // Added AlertsTab as index 1 — Routines moves to 2, Settings to 3
+  final List<Widget> _tabs = const [
+    SensorsTab(),
+    AlertsTab(),
+    RoutinesTab(),
+    SettingsTab(),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -33,6 +43,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             icon: Icon(Icons.sensors_outlined),
             selectedIcon: Icon(Icons.sensors),
             label: 'Sensors',
+          ),
+          NavigationDestination(
+            // ← NEW
+            icon: Icon(Icons.notifications_outlined),
+            selectedIcon: Icon(Icons.notifications),
+            label: 'Alerts',
           ),
           NavigationDestination(
             icon: Icon(Icons.event_note_outlined),
@@ -54,8 +70,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       case 0:
         return 'Sensors';
       case 1:
-        return 'Routines';
+        return 'Alerts';
       case 2:
+        return 'Routines';
+      case 3:
         return 'Settings';
       default:
         return 'Smart Home';

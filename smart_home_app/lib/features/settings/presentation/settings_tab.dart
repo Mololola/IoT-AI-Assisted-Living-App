@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../auth/providers/auth_provider.dart';
+// Add this import at the TOP of settings_tab.dart
+import 'backend_test_screen.dart';
 
 class SettingsTab extends ConsumerStatefulWidget {
   const SettingsTab({super.key});
@@ -76,6 +78,24 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
                 ),
               ],
             ),
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        //test app connection
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.bug_report),
+            title: const Text('Backend Connection Test'),
+            subtitle: const Text('Test API connectivity'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => const BackendTestScreen(),
+                ),
+              );
+            },
           ),
         ),
         const SizedBox(height: 16),

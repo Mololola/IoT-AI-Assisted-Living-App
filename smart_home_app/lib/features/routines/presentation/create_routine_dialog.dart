@@ -1,6 +1,9 @@
+// FILE: lib/features/routines/presentation/create_routine_dialog.dart
+// Updated to use domain model and controller instead of direct provider access
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../data/mock_data.dart';
+import '../domain/routine.dart'; // Changed: import domain model
+import '../data/routine_providers.dart'; // Changed: import providers
 
 class CreateRoutineDialog extends ConsumerStatefulWidget {
   const CreateRoutineDialog({super.key});
@@ -66,7 +69,8 @@ class _CreateRoutineDialogState extends ConsumerState<CreateRoutineDialog> {
         return;
       }
 
-      final routine = MockRoutine(
+      // Changed: Create Routine domain model instead of MockRoutine
+      final routine = Routine(
         id: DateTime.now().millisecondsSinceEpoch,
         scope: _scope,
         description: _descriptionController.text.trim(),
@@ -75,7 +79,8 @@ class _CreateRoutineDialogState extends ConsumerState<CreateRoutineDialog> {
         createdAt: DateTime.now(),
       );
 
-      ref.read(mockRoutinesProvider.notifier).addRoutine(routine);
+      // Changed: Call controller method instead of direct notifier access
+      ref.read(routineListProvider.notifier).addRoutine(routine);
 
       Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(

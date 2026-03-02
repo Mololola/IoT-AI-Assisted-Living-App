@@ -1,3 +1,4 @@
+// android/build.gradle
 allprojects {
     repositories {
         google()
