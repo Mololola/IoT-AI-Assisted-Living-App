@@ -1,0 +1,206 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h> 
+#include <PubSubClient.h>
+#include <time.h>
+
+// --- 1. CONFIGURATION --- 
+const char* ssid = "IoT-Lab";            
+const char* password = "ELEC423_2526!";      
+const char* mqtt_server = "192.168.1.101"; // Verify this IP!
+
+// CRUCIAL: Must match the Common Name (CN) generated on the Pi
+const char* mqtt_client_id = "ESP32_livingroom_light"; 
+const char* mqtt_publish_topic = "home/livingroom/light"; 
+
+const int lightSensorPin = 34; 
+const int threshold = 200;      
+const int hysteresis = 30;     
+
+// State Tracking 
+bool isDaytime = false;        
+bool lastState = false;       
+bool firstRun = true;          // Ensures initial state is sent on boot
+
+// --- 2. MUTUAL TLS CREDENTIALS ---
+
+// 2a. The Root CA 
+const char* root_ca = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDjzCCAnegAwIBAgIUPkCaskkmR6eJH1JlZyUTGyf2HAQwDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAyMjcwOTUwNDZaFw0zNjAyMjUwOTUwNDZaMFcxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxEDAOBgNVBAMMB01FTkdfQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+AoIBAQCk+nF0+rE0hT+iqftqnpSiK9h8PuFzhGAIZn5CLNUhhoDQ8z+h/34NETXD
+6VMBOJV/9LsTEk5HPCtA0G+xEi/8r9RlIG+bzY3JtTaMnVlZkaHsj9H5oHRlcAoo
+ygb7DdOri8SFmwglPt1Ehhp1VtgoxfZjqVTX+TJw/+CFsSki5L8t3PZHVfVXddlb
+LMDZ3HYbfytram0ajLSjNdc9VUCtXKXTXPMXFAKXF3kLdjLTVL7kqOqL8p6bJdcE
+/z1c/aVZ7wSHyQxdv4IZxGUX6W6TlG20W7ctO3ZRpx+n4o7+Wg3x64g+IqAr/MYf
+3cVGS93b/DFe20+HfLLtFdnNmFXVAgMBAAGjUzBRMB0GA1UdDgQWBBSwjLA0RgzF
+He54i9GWLKbkD4P1cTAfBgNVHSMEGDAWgBSwjLA0RgzFHe54i9GWLKbkD4P1cTAP
+BgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAt/6aVsCt4PwzthXLF
+aVc9v3CfvYVBQNmf33fYu6+ftkDRS5ja0mPVOEKYhjEW4g1o7pQIVzYpSN5RkXzv
+0elFCT8n9sQNTI2gOY5oG/HES/wQcGFvnXni5g7z2ZIu6zHr67qJsWlHuwMAVqIA
+5E5XZDDBeEhWEb7yfc3Gr4GXoPP6UPwoZNCjZDMrw209TTvxdLUL2i7c0aBLPeEU
+ScNdhCaN2fJWlmvB6OmN70TnC1rDwUDxKxKdHiv0TaW7i8G/fw7yeCajxmUTcoWR
+FRk5rhbIJ/mAIR20PdUjzvsDza3FIVTlThvZo6t8fQrVTzTZHrg30/zKo8K6YtZ6
+tSmw
+-----END CERTIFICATE------
+)EOF";
+
+// 2b. The Light Sensor Client Certificate
+const char* client_cert = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDjTCCAnWgAwIBAgIUdKrpQl0A3VnP8WR/WeoleuRttKQwDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAzMDIxMTAwMTVaFw0zNjAyMjgxMTAwMTVaMGYxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxHzAdBgNVBAMMFkVTUDMyX2xpdmluZ3Jvb21fbGlnaHQwggEiMA0GCSqGSIb3
+DQEBAQUAA4IBDwAwggEKAoIBAQD3cEtsgfOIF6ANOGGTQXnHdCqFpz86yNIAODOc
+oata6b2MdlZjpk/NXz1vSJJNAZbGNeB6bgbXcxDNAULtw2WnYH0ovux5+5rvyZt1
+ZPIHLhJLeIg8kx3N8oY5if7vCGQqLW10QWHjvq3fUt4F94AX41nrtUTxDw4Gwci1
+JVnnXkMc7KZExA+/lju/xIb8QcYUSa68Jobwc+YNAP1oJXVXhkseh0T7Yc2W9kjP
+J01Ka0PDAA4iabsWlAsqE5xpzwZ0PFjF+27RLN3yT8D5KbnOUUx1jEFqdboj0FBG
+DOM5D2dLm4sTGfFA8xheelwgUN+tnI1nfLNtxIS2nSuaTMvjAgMBAAGjQjBAMB0G
+A1UdDgQWBBTVOSMTKTdXkbjn2jPwuGnn8y/DqDAfBgNVHSMEGDAWgBSwjLA0RgzF
+He54i9GWLKbkD4P1cTANBgkqhkiG9w0BAQsFAAOCAQEAdT4dPXQMwa6G4SR+ASjR
+lBXkjYj3DbMyf7tlTI+kBG1hTyGvH+FgHywMzEKlpu+N/E8aYUstW30pSycDJstD
+orGCaJvkiiEEPuavtOxyS1F7x6mDfpK1duB2ZKbVxnhb1FBBYBtx+HdvU6QUauP4
+ATBhIPUPhrrKzvDtrDIf/gL7IOeA4di9fLIL+tGU+4GJnrvO5mBW7UhjzDHTL0hg
+98Kmtv9iXzkwGQbODBADp2N9qDirFj1Uaik9WaVO1Hzy9v1y3DzVB4v+VpwbGeyo
+IBDA0UUuDboVwrwt48fBQRVe5TeFsZs9insJBdCWSHK/HezKoLb+ClAKQIcQSABK
+5A==
+-----END CERTIFICATE-----
+)EOF";
+
+// 2c. The Light Sensor Client Private Key
+// MUST MANUALLY ADD 'RSA' TO THE HEADER AND FOOTER
+const char* client_key = R"EOF(
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQD3cEtsgfOIF6AN
+OGGTQXnHdCqFpz86yNIAODOcoata6b2MdlZjpk/NXz1vSJJNAZbGNeB6bgbXcxDN
+AULtw2WnYH0ovux5+5rvyZt1ZPIHLhJLeIg8kx3N8oY5if7vCGQqLW10QWHjvq3f
+Ut4F94AX41nrtUTxDw4Gwci1JVnnXkMc7KZExA+/lju/xIb8QcYUSa68Jobwc+YN
+AP1oJXVXhkseh0T7Yc2W9kjPJ01Ka0PDAA4iabsWlAsqE5xpzwZ0PFjF+27RLN3y
+T8D5KbnOUUx1jEFqdboj0FBGDOM5D2dLm4sTGfFA8xheelwgUN+tnI1nfLNtxIS2
+nSuaTMvjAgMBAAECggEAA7KROKKLKcIgntH0M1J2fWfbqCT4VD/iqM+Dhe2sioPq
+VIpYKXkMwZGQxh7xgLvArbQ/EdVJvjfL987zBGviaFPldZG/euXVn4uwX7AN0H78
+awBMGOD3QGKauuANsoi6O8nIqZoTL7y5CxielLw+v8dNSrEUwf1q75LpwDs5/V5r
+CzyLalLYBxF3/njQ9DCCSg/mhU7Rxyf0Yd8dF+18JidJDb5W+eWWj20gpGoCG4as
+bZtq7l9efFWfDZjCvlW1ZVDYLgMAppAsAtfXFrXUoP+qUl8THRwjAGS5Fl2CSPNJ
+hkxBm/e2gWh6xfLAIW2SyQpoPMxky60wbR/C4Cc7YQKBgQD+et3qAOtJp6gB1F9G
+SdAoKK3FAemwQucbv9t9O8Az8Cx+SUi0T1gA2+iFlgSG5LPMfZqzgbod+Y7XXNRq
+61zxlPkHc1Io5kFOQDlVBaqX4I1VVKRVVlYwUrlXsddjSkhP645LSpPaDngjXFHJ
+6sDzMy0eXGTmmnn9EjJqmQCoiwKBgQD46qkkE4G430A0Aokgt6NVGeoua/1LnkjF
+pDzy6xFplHW3TaXkbuWbUmZye4lIWVBPo4qBt/WelcKeIq/bHnrdiRyWdTSwVbSw
+48r7OuFrFDOstNfZjtRmTT2euHmklVDQNT0yevo0LmOOxoJMdIznyWpk+BtkPv4s
+awikGVF9CQKBgFkrTF8We1uPt7sMY2YJrzqjJmCFzxDIIJsEmzBCo5KPcce+fg9Q
+ThHe/JbyfhuWP7pDuNV1e3XNYFPuXzAn0KWGAcyuh/d01yVIM86q8Z/OOzfPNNYC
+Lqk4E2G7GzHbcYMvkuim9S/PKiGZ077g10Ngh0rALUrwjhYzLh9UBXsJAoGARUrt
+8wELJ6/ea5wZGGaGrXYdXvbo+FgD4iEqZmVR35ZYfsK637CPcoGpy0zglqdmWAUq
+1ZmkYpVGLEdztQfzJCC7OJdAJ6Z0OpnvM6jcf7aL/BQL0qCUODZgZQLtugdnC88G
+Tjs107jmNiTEuQvo/c1wNNNsrKdskmjpauUxbiECgYEAyIouvDLbNefCJvSeozsj
+S+SrmbONbnt9eOJi9V81gPLZxVMtq/biymtI9R8iFCuAdm7x5nzWiQOxnsXIZMVh
+wVVMLGoZcQbNtFlf5GK3aQYPjGSienzR53jDKKnSVH2LdVUkyBSCmA/KKiZu8UwP
+t2IUfud9WOYz/3gOSDDHRVM=
+-----END PRIVATE KEY-----
+)EOF";
+
+WiFiClientSecure espClient;
+PubSubClient client(espClient);
+
+// --- 3. HELPER FUNCTIONS ---
+
+void syncTime() {
+  configTime(0, 0, "pool.ntp.org", "time.google.com");
+  Serial.print("Syncing Clock for TLS: ");
+  time_t now = time(nullptr);
+  while (now < 1672531200) { 
+    delay(500);
+    Serial.print(".");
+    now = time(nullptr);
+  }
+  Serial.println("\n[OK] Time Synced.");
+}
+
+void setup_wifi() {
+  delay(10);
+  Serial.print("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) { 
+    delay(500); 
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected.");
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Attempting STRICT mTLS connection...");
+    if (client.connect(mqtt_client_id)) {
+      Serial.println("CONNECTED SECURELY!");
+      // Re-send state upon reconnection to ensure Pi is synced
+      String payload = isDaytime ? "Day" : "Night";
+      client.publish(mqtt_publish_topic, payload.c_str());
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" - Retrying in 5s...");
+      delay(5000); 
+    }
+  }
+}
+
+// --- 4. MAIN LOGIC ---
+
+void setup() {
+  Serial.begin(115200);
+  analogSetAttenuation(ADC_11db); 
+  
+  setup_wifi();
+  syncTime();
+
+  // Load the Security Trio
+  espClient.setCACert(root_ca); 
+  espClient.setCertificate(client_cert); 
+  espClient.setPrivateKey(client_key);   
+  
+  // ESP32 v3.0 Handshake fix
+  espClient.setHandshakeTimeout(45); 
+
+  client.setServer(mqtt_server, 8883); // Using secure port
+  Serial.println("Living Room Light Secure Monitor Active.");
+}
+
+void loop() {
+  if (!client.connected()) reconnect();
+  client.loop();
+
+  int currentRead = analogRead(lightSensorPin);
+
+  // Logic with hysteresis 
+  if (!isDaytime && (currentRead > (threshold + hysteresis))) {
+    isDaytime = true;
+  } 
+  else if (isDaytime && (currentRead < (threshold - hysteresis))) {
+    isDaytime = false;
+  }
+
+  // Publish when there is a change or on boot
+  if (isDaytime != lastState || firstRun) {
+    String payload = isDaytime ? "Day" : "Night";
+    
+    Serial.print("Secure State Change Detected: ");
+    Serial.println(payload);
+    
+    // Publishing to the specific state topic
+    client.publish(mqtt_publish_topic, payload.c_str());
+    
+    lastState = isDaytime;
+    firstRun = false; 
+  }
+
+  delay(500); // Check twice a second
+}
