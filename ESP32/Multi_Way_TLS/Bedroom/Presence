@@ -81,6 +81,7 @@ RA==
 
 // 2c. The Presence Client Private Key
 // MUST MANUALLY ADD 'RSA' TO THE HEADER AND FOOTER
+const char* client_key = R"EOF(
 -----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCwrU3nh6/W/sVO
 v+ZbkJjyEfbj6wtnQqYT4mAOr+Gun3oDAAmv0ITNHAfSLATa0W5GNaCufFEFuzs4
