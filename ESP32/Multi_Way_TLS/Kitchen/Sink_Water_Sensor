@@ -6,7 +6,7 @@
 // --- 1. CONFIGURATION --- 
 const char* ssid = "IoT-Lab";            
 const char* password = "ELEC423_2526!";      
-const char* mqtt_server = "192.168.1.101; // Verify this IP (.100 vs .101)
+const char* mqtt_server = "192.168.1.101"; // Verify this IP (.100 vs .101)
 
 // CRUCIAL: Must match the Common Name (CN) generated on the Pi
 const char* mqtt_client_id = "ESP32_Kitchen_Sink"; 
