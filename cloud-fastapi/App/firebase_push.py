@@ -2,6 +2,7 @@ import firebase_admin
 from firebase_admin import credentials, messaging
 import os
 
+
 def init_firebase():
     if not firebase_admin._apps:
         project_id = os.getenv("FIREBASE_PROJECT_ID")
@@ -24,5 +25,22 @@ def init_firebase():
 
 
 def send_alert_notification(doc):
-    # Temporary safe placeholder
-    print("Alert notification would be sent:", doc["alert_id"])
+    try:
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title=f"{doc['severity'].upper()} Alert",
+                body=doc["message"],
+            ),
+            data={
+                "alert_id": str(doc["alert_id"]),
+                "severity": doc["severity"],
+                "rule_type": doc["rule_type"],
+            },
+            topic="alerts",
+        )
+
+        response = messaging.send(message)
+        print("FCM sent:", response)
+
+    except Exception as e:
+        print("FCM error:", str(e))
