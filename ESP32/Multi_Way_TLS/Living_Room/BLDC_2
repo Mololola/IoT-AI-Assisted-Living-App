@@ -1,0 +1,206 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h> 
+#include <PubSubClient.h>
+#include <Stepper.h>
+#include <time.h>
+
+// --- 1. CONFIGURATION --- 
+const char* ssid = "IoT-Lab";            
+const char* password = "ELEC423_2526!";      
+const char* mqtt_server = "192.168.1.101"; // Verify IP!
+
+// *** CHANGE THESE 3 VARIABLES FOR EACH BOARD ***
+const char* mqtt_client_id = "ESP32_livingroom_BLDC2"; 
+const char* topic_cmd = "home/livingroom/blinds"; 
+const char* topic_status = "home/livingroom/blinds/status";
+
+// Motor Config
+const int STEPS_PER_REV = 2048; 
+Stepper myStepper(STEPS_PER_REV, 18, 21, 19, 22);
+
+// --- 2. MUTUAL TLS CREDENTIALS ---
+
+// 2a. The Root CA 
+const char* root_ca = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDjzCCAnegAwIBAgIUPkCaskkmR6eJH1JlZyUTGyf2HAQwDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAyMjcwOTUwNDZaFw0zNjAyMjUwOTUwNDZaMFcxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxEDAOBgNVBAMMB01FTkdfQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+AoIBAQCk+nF0+rE0hT+iqftqnpSiK9h8PuFzhGAIZn5CLNUhhoDQ8z+h/34NETXD
+6VMBOJV/9LsTEk5HPCtA0G+xEi/8r9RlIG+bzY3JtTaMnVlZkaHsj9H5oHRlcAoo
+ygb7DdOri8SFmwglPt1Ehhp1VtgoxfZjqVTX+TJw/+CFsSki5L8t3PZHVfVXddlb
+LMDZ3HYbfytram0ajLSjNdc9VUCtXKXTXPMXFAKXF3kLdjLTVL7kqOqL8p6bJdcE
+/z1c/aVZ7wSHyQxdv4IZxGUX6W6TlG20W7ctO3ZRpx+n4o7+Wg3x64g+IqAr/MYf
+3cVGS93b/DFe20+HfLLtFdnNmFXVAgMBAAGjUzBRMB0GA1UdDgQWBBSwjLA0RgzF
+He54i9GWLKbkD4P1cTAfBgNVHSMEGDAWgBSwjLA0RgzFHe54i9GWLKbkD4P1cTAP
+BgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAt/6aVsCt4PwzthXLF
+aVc9v3CfvYVBQNmf33fYu6+ftkDRS5ja0mPVOEKYhjEW4g1o7pQIVzYpSN5RkXzv
+0elFCT8n9sQNTI2gOY5oG/HES/wQcGFvnXni5g7z2ZIu6zHr67qJsWlHuwMAVqIA
+5E5XZDDBeEhWEb7yfc3Gr4GXoPP6UPwoZNCjZDMrw209TTvxdLUL2i7c0aBLPeEU
+ScNdhCaN2fJWlmvB6OmN70TnC1rDwUDxKxKdHiv0TaW7i8G/fw7yeCajxmUTcoWR
+FRk5rhbIJ/mAIR20PdUjzvsDza3FIVTlThvZo6t8fQrVTzTZHrg30/zKo8K6YtZ6
+tSmw
+-----END CERTIFICATE-----
+)EOF";
+
+// 2b. The Specific Client Certificate
+// *** PASTE lr_bldc1, lr_bldc2, OR bed_bldc CERT HERE ***
+const char* client_cert = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDjTCCAnWgAwIBAgIUdKrpQl0A3VnP8WR/WeoleuRttK0wDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAzMDMxMDMyMDBaFw0zNjAyMjkxMDMyMDBaMGYxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxHzAdBgNVBAMMFkVTUDMyX2xpdmluZ3Jvb21fQkxEQzIwggEiMA0GCSqGSIb3
+DQEBAQUAA4IBDwAwggEKAoIBAQCeTkwXz+wvRIKv0HogRE6OlcAIkpe1F1m0B8Fb
+9eHMHYIsr7CrOQ0cDuzmwI+4ZlN44OxV+MsNozwl+KR09Jh7EXpo1cOzpvNsgU9Y
+osiCZMgafT57gm/KZ5QM7FeTpihQeDg4TZWX3gzIscJJUTjly38k6OenvBzqt9kA
+tVts4quZmK7F+fcrG6ExUlhC9TY6n+A/uqRrccQ5Wbhd56q+J9+H9jEoHGxM5bat
+xv869RI5gd/BlJP4FZTXaQmOQjS9wkOAtL6/HVE7i6ePCaMTyTM9MjOa81i1/MB1
+ak2Jp+Hvmevm6XagPT3IbYr7TfkUBoGNvDiAIo+huvtdKsI9AgMBAAGjQjBAMB0G
+A1UdDgQWBBSFMW/Nd+TS0IUornoi0M9l+8G1rzAfBgNVHSMEGDAWgBSwjLA0RgzF
+He54i9GWLKbkD4P1cTANBgkqhkiG9w0BAQsFAAOCAQEAXT2/FQYRo0TgI280rezb
+fO3aKQD0CFzoZXY/j3+ZV3RgG0GVRkl8ks7ZHtXXHSRJRRmP5dOxVMwPECf0ekOa
+GroyJutY1QfovrFuEoI21QuZo+yCK9MGoDxb5BSDt3l84Q6rS2Y4bJg8g2DUCM6P
+9zVJzRcgbDWGmLCuEPE09HhUyQ0dcuqdewzV/ciYGkXmMfExvcB57x+hheF+4bqb
+XGnhWWECo/hzr05g/6KJOqZP1sEZIc0zCBHwRQvD0zE06LvhWbeEn8AtQ4Dm/BJz
+r+0kfM/ed0+iwbfO4mFt7JxhB+0aBZQhGB2uJwufGztHWjzMb4am+beTy2d7Itg4
+PA==
+-----END CERTIFICATE-----
+)EOF";
+
+// 2c. The Specific Client Private Key
+// *** MUST ADD 'RSA' TO HEADER/FOOTER ***
+const char* client_key = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDjTCCAnWgAwIBAgIUdKrpQl0A3VnP8WR/WeoleuRttK0wDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAzMDMxMDMyMDBaFw0zNjAyMjkxMDMyMDBaMGYxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxHzAdBgNVBAMMFkVTUDMyX2xpdmluZ3Jvb21fQkxEQzIwggEiMA0GCSqGSIb3
+DQEBAQUAA4IBDwAwggEKAoIBAQCeTkwXz+wvRIKv0HogRE6OlcAIkpe1F1m0B8Fb
+9eHMHYIsr7CrOQ0cDuzmwI+4ZlN44OxV+MsNozwl+KR09Jh7EXpo1cOzpvNsgU9Y
+osiCZMgafT57gm/KZ5QM7FeTpihQeDg4TZWX3gzIscJJUTjly38k6OenvBzqt9kA
+tVts4quZmK7F+fcrG6ExUlhC9TY6n+A/uqRrccQ5Wbhd56q+J9+H9jEoHGxM5bat
+xv869RI5gd/BlJP4FZTXaQmOQjS9wkOAtL6/HVE7i6ePCaMTyTM9MjOa81i1/MB1
+ak2Jp+Hvmevm6XagPT3IbYr7TfkUBoGNvDiAIo+huvtdKsI9AgMBAAGjQjBAMB0G
+A1UdDgQWBBSFMW/Nd+TS0IUornoi0M9l+8G1rzAfBgNVHSMEGDAWgBSwjLA0RgzF
+He54i9GWLKbkD4P1cTANBgkqhkiG9w0BAQsFAAOCAQEAXT2/FQYRo0TgI280rezb
+fO3aKQD0CFzoZXY/j3+ZV3RgG0GVRkl8ks7ZHtXXHSRJRRmP5dOxVMwPECf0ekOa
+GroyJutY1QfovrFuEoI21QuZo+yCK9MGoDxb5BSDt3l84Q6rS2Y4bJg8g2DUCM6P
+9zVJzRcgbDWGmLCuEPE09HhUyQ0dcuqdewzV/ciYGkXmMfExvcB57x+hheF+4bqb
+XGnhWWECo/hzr05g/6KJOqZP1sEZIc0zCBHwRQvD0zE06LvhWbeEn8AtQ4Dm/BJz
+r+0kfM/ed0+iwbfO4mFt7JxhB+0aBZQhGB2uJwufGztHWjzMb4am+beTy2d7Itg4
+PA==
+-----END CERTIFICATE-----
+)EOF";
+
+WiFiClientSecure espClient;
+PubSubClient client(espClient);
+
+// --- 3. HELPER FUNCTIONS ---
+
+void syncTime() {
+  configTime(0, 0, "pool.ntp.org", "time.google.com");
+  Serial.print("Syncing Clock for TLS: ");
+  time_t now = time(nullptr);
+  while (now < 1672531200) { 
+    delay(500);
+    Serial.print(".");
+    now = time(nullptr);
+  }
+  Serial.println("\n[OK] Time Synced.");
+}
+
+void setup_wifi() {
+  delay(10);
+  Serial.println("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) { 
+    delay(500); 
+    Serial.print("."); 
+  }
+  Serial.println("\nWiFi connected");
+}
+
+void disableMotor() {
+  digitalWrite(18, LOW); digitalWrite(19, LOW);
+  digitalWrite(21, LOW); digitalWrite(22, LOW);
+  Serial.println("Motor Relaxed (Power Saved)");
+}
+
+// --- 4. SECURE MQTT COMMAND HANDLER ---
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  String message;
+  for (int i = 0; i < length; i++) { message += (char)payload[i]; }
+  message.toUpperCase();
+  
+  Serial.println("Secure Command arrived [" + String(topic) + "]: " + message);
+
+  if (message == "OPEN") {
+    Serial.println("Action: Opening Blinds...");
+    myStepper.step(STEPS_PER_REV * 2); 
+    disableMotor();
+    
+    String statusMsg = String(mqtt_client_id) + " OPENED";
+    client.publish(topic_status, statusMsg.c_str());
+  } 
+  else if (message == "CLOSE") {
+    Serial.println("Action: Closing Blinds...");
+    myStepper.step(-STEPS_PER_REV * 2); 
+    disableMotor();
+    
+    String statusMsg = String(mqtt_client_id) + " CLOSED";
+    client.publish(topic_status, statusMsg.c_str());
+  }
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Attempting STRICT mTLS connection...");
+    if (client.connect(mqtt_client_id)) {
+      Serial.println("connected securely!");
+      client.subscribe(topic_cmd); // Listen for secure commands
+      Serial.println("Subscribed to command topic.");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      delay(5000);
+    }
+  }
+}
+
+// --- 5. SETUP & LOOP ---
+
+void setup() {
+  Serial.begin(115200);
+  myStepper.setSpeed(12);
+  
+  pinMode(18, OUTPUT); pinMode(19, OUTPUT);
+  pinMode(21, OUTPUT); pinMode(22, OUTPUT);
+  disableMotor(); // Start in relaxed state to save power
+
+  setup_wifi();
+  syncTime();
+
+  // Load the Security Trio
+  espClient.setCACert(root_ca); 
+  espClient.setCertificate(client_cert); 
+  espClient.setPrivateKey(client_key);   
+  
+  espClient.setHandshakeTimeout(45); 
+
+  client.setServer(mqtt_server, 8883); // Secure Port
+  client.setCallback(callback);
+}
+
+void loop() {
+  if (!client.connected()) reconnect();
+  client.loop();
+}
