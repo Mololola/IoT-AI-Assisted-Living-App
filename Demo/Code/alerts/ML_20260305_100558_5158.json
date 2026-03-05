@@ -1,0 +1,31 @@
+{
+  "alert_id": "ML_20260305_100558_5158",
+  "timestamp": "2026-03-05T10:05:58.848892",
+  "rule_type": "ML_NIGHT_WANDERING",
+  "severity": "HIGH",
+  "message": "ML: Bed empty with no room presence at 10:19 PM",
+  "recommended_action": "Check for disorientation",
+  "source": "ML_ENGINE",
+  "anomaly_score": -0.7127,
+  "sensor_data": {
+    "bed_pressure": 4428.0,
+    "presence_cm": 600.0,
+    "pir_state": "OUT",
+    "light_state": "DAY",
+    "simulated_time": "22:19",
+    "feature_summary": {
+      "hour_normalized": 0.9254,
+      "is_sleep_time": 1.0,
+      "bed_occupancy_rate": 0.4,
+      "bed_pressure_mean": 0.3742,
+      "bed_pressure_std": 0.4611,
+      "presence_near_rate": 0.0,
+      "presence_mean_distance": 1.0,
+      "presence_std_distance": 0.0,
+      "pir_in_rate": 0.0,
+      "light_night_rate": 0.0,
+      "bed_transitions": 0.3,
+      "stillness_score": 0.5792
+    }
+  }
+}

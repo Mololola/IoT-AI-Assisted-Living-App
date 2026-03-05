@@ -1,0 +1,51 @@
+2026-03-05 10:05:38,940 [INFO] Connecting to MQTT localhost:1883...
+2026-03-05 10:05:38,941 [INFO] MQTT connected - listening to 4 bedroom sensors
+2026-03-05 10:05:41,547 [INFO] ML model loaded from models/demo_model.pkl
+2026-03-05 10:05:43,835 [INFO] LEDs ON - night wandering detected
+2026-03-05 10:06:00,248 [INFO] LEDs OFF - person returned to bed
+2026-03-05 10:06:14,079 [INFO] LEDs ON - night wandering detected
+2026-03-05 10:23:54,561 [INFO] Connecting to MQTT localhost:1883...
+2026-03-05 10:23:54,562 [INFO] MQTT connected - listening to 4 bedroom sensors
+2026-03-05 10:23:57,134 [INFO] ML model loaded from models/demo_model.pkl
+2026-03-05 10:24:14,033 [INFO] LEDs ON - night wandering detected
+2026-03-05 10:25:11,194 [INFO] Connecting to MQTT localhost:1883...
+2026-03-05 10:25:11,196 [INFO] MQTT connected - listening to 4 bedroom sensors
+2026-03-05 10:25:13,769 [INFO] ML model loaded from models/demo_model.pkl
+2026-03-05 10:25:29,717 [INFO] LEDs ON - night wandering detected
+2026-03-05 10:26:08,157 [INFO] Connecting to MQTT localhost:1883...
+2026-03-05 10:26:08,159 [INFO] MQTT connected - listening to 4 bedroom sensors
+2026-03-05 10:26:10,740 [INFO] ML model loaded from models/demo_model.pkl
+2026-03-05 10:26:19,847 [INFO] LEDs ON - night wandering detected
+2026-03-05 10:28:54,424 [INFO] Connecting to MQTT localhost:1883...
+2026-03-05 10:28:54,425 [INFO] MQTT connected - listening to 4 bedroom sensors
+2026-03-05 10:28:57,021 [INFO] ML model loaded from models/demo_model.pkl
+2026-03-05 10:28:57,874 [INFO] LEDs ON - night wandering detected
+2026-03-05 10:29:03,875 [INFO] LEDs OFF - person returned to bed
+2026-03-05 10:29:13,646 [INFO] LEDs ON - night wandering detected
+2026-03-05 10:31:03,260 [INFO] Connecting to MQTT localhost:1883...
+2026-03-05 10:31:03,262 [INFO] MQTT connected - listening to 4 bedroom sensors
+2026-03-05 10:31:05,851 [INFO] ML model loaded from models/demo_model.pkl
+2026-03-05 10:31:22,043 [INFO] LEDs ON - night wandering detected
+2026-03-05 10:31:43,952 [INFO] Connecting to MQTT localhost:1883...
+2026-03-05 10:31:43,953 [INFO] MQTT connected - listening to 4 bedroom sensors
+2026-03-05 10:31:46,530 [INFO] ML model loaded from models/demo_model.pkl
+2026-03-05 10:31:59,954 [INFO] LEDs ON - night wandering detected
+2026-03-05 10:33:39,912 [INFO] Connecting to MQTT localhost:1883...
+2026-03-05 10:33:39,914 [INFO] MQTT connected - listening to 4 bedroom sensors
+2026-03-05 10:33:42,502 [INFO] ML model loaded from models/demo_model.pkl
+2026-03-05 10:33:43,311 [INFO] LEDs ON - night wandering detected
+2026-03-05 10:33:54,313 [INFO] LEDs OFF - person returned to bed
+2026-03-05 10:33:59,229 [INFO] LEDs ON - night wandering detected
+2026-03-05 10:36:20,342 [INFO] Connecting to MQTT localhost:1883...
+2026-03-05 10:36:20,344 [INFO] MQTT connected - listening to 4 bedroom sensors
+2026-03-05 10:36:22,911 [INFO] ML model loaded from models/demo_model.pkl
+2026-03-05 10:36:23,874 [INFO] LEDs ON - night wandering detected
+2026-03-05 10:37:10,889 [INFO] Connecting to MQTT localhost:1883...
+2026-03-05 10:37:10,890 [INFO] MQTT connected - listening to 4 bedroom sensors
+2026-03-05 10:37:13,476 [INFO] ML model loaded from models/demo_model.pkl
+2026-03-05 10:37:14,274 [INFO] LEDs ON - night wandering detected
+2026-03-05 10:38:12,732 [INFO] Connecting to MQTT localhost:1883...
+2026-03-05 10:38:12,733 [INFO] MQTT connected - listening to 4 bedroom sensors
+2026-03-05 10:38:15,337 [INFO] ML model loaded from models/demo_model.pkl
+2026-03-05 10:38:31,154 [INFO] LEDs ON - night wandering detected
+2026-03-05 10:39:05,299 [INFO] LEDs OFF - person returned to bed

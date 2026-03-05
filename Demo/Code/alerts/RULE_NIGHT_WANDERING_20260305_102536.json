@@ -1,0 +1,17 @@
+{
+  "alert_id": "RULE_NIGHT_WANDERING_20260305_102536",
+  "timestamp": "2026-03-05T10:25:36.219943",
+  "rule_type": "NIGHT_WANDERING",
+  "severity": "HIGH",
+  "message": "Person out of bed at 10:25 PM - bed empty, not in room, dark",
+  "recommended_action": "Check on resident - possible disorientation",
+  "source": "RULE_ENGINE",
+  "anomaly_score": null,
+  "sensor_data": {
+    "bed_pressure": 0.0,
+    "presence_cm": 281.0,
+    "pir_state": "OUT",
+    "light_state": "NIGHT",
+    "simulated_time": "22:25"
+  }
+}

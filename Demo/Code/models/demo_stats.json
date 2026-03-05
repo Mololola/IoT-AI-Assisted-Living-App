@@ -1,0 +1,29 @@
+{
+  "total_samples": 396000,
+  "feature_vectors": 79194,
+  "feature_count": 12,
+  "feature_names": [
+    "hour_normalized",
+    "is_sleep_time",
+    "bed_occupancy_rate",
+    "bed_pressure_mean",
+    "bed_pressure_std",
+    "presence_near_rate",
+    "presence_mean_distance",
+    "presence_std_distance",
+    "pir_in_rate",
+    "light_night_rate",
+    "bed_transitions",
+    "stillness_score"
+  ],
+  "normal": 76818,
+  "anomaly": 2376,
+  "anomaly_ratio": 0.03,
+  "score_mean": -0.4299,
+  "score_std": 0.0944,
+  "contamination": 0.03,
+  "n_estimators": 150,
+  "window_size": 30,
+  "window_step": 5,
+  "trained_at": "2026-03-05T09:33:01.126973"
+}
