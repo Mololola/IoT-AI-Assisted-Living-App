@@ -53,3 +53,34 @@ class AlertOut(BaseModel):
     acknowledged: bool
     acknowledged_at: Optional[datetime] = None
     created_at: datetime
+
+# -------------------------
+# EXCEPTIONS
+# -------------------------
+
+class ExceptionIn(BaseModel):
+    type: str
+    message: str
+    source: Optional[str] = None
+    timestamp: str
+
+
+class ExceptionOut(ExceptionIn):
+    id: str
+    created_at: datetime
+    
+# -------------------------
+# SENSOR READINGS
+# -------------------------
+
+class SensorReadingIn(BaseModel):
+    sensor_id: str
+    sensor_type: str
+    value: float
+    unit: str
+    timestamp: str
+
+
+class SensorReadingOut(SensorReadingIn):
+    id: str
+    created_at: datetime
