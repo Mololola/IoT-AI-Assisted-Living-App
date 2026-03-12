@@ -233,3 +233,102 @@ async def acknowledge_alert(id: str):
         "acknowledged_at": a2.get("acknowledged_at"),
         "created_at": a2["created_at"],
     }
+    
+# -------------------------
+# EXCEPTIONS
+# -------------------------
+
+@router.post("/exceptions", response_model=schemas.ExceptionOut)
+async def create_exception(payload: schemas.ExceptionIn):
+    db = mongo.db()
+
+    doc = payload.model_dump()
+    doc["created_at"] = datetime.utcnow()
+
+    res = await db["exceptions"].insert_one(doc)
+    e = await db["exceptions"].find_one({"_id": res.inserted_id})
+
+    return {
+        "id": str(e["_id"]),
+        "type": e["type"],
+        "message": e["message"],
+        "source": e.get("source"),
+        "timestamp": e["timestamp"],
+        "created_at": e["created_at"],
+    }
+
+
+@router.get("/exceptions")
+async def list_exceptions(limit: int = 50):
+    db = mongo.db()
+
+    cursor = db["exceptions"].find({}, sort=[("created_at", -1)]).limit(limit)
+
+    out = []
+    async for e in cursor:
+        e["_id"] = str(e["_id"])
+        out.append(e)
+
+    return out
+
+
+@router.delete("/exceptions/{id}")
+async def delete_exception(id: str):
+    db = mongo.db()
+
+    res = await db["exceptions"].delete_one({"_id": to_oid(id)})
+
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Exception not found")
+
+    return {"deleted": True}
+
+# -------------------------
+# SENSOR READINGS
+# -------------------------
+
+@router.post("/sensor-readings", response_model=schemas.SensorReadingOut)
+async def create_sensor_reading(payload: schemas.SensorReadingIn):
+    db = mongo.db()
+
+    doc = payload.model_dump()
+    doc["created_at"] = datetime.utcnow()
+
+    res = await db["sensor_readings"].insert_one(doc)
+    r = await db["sensor_readings"].find_one({"_id": res.inserted_id})
+
+    return {
+        "id": str(r["_id"]),
+        "sensor_id": r["sensor_id"],
+        "sensor_type": r["sensor_type"],
+        "value": r["value"],
+        "unit": r["unit"],
+        "timestamp": r["timestamp"],
+        "created_at": r["created_at"],
+    }
+
+
+@router.get("/sensor-readings")
+async def list_sensor_readings(limit: int = 100):
+    db = mongo.db()
+
+    cursor = db["sensor_readings"].find({}, sort=[("created_at", -1)]).limit(limit)
+
+    out = []
+    async for r in cursor:
+        r["_id"] = str(r["_id"])
+        out.append(r)
+
+    return out
+
+
+@router.delete("/sensor-readings/{id}")
+async def delete_sensor_reading(id: str):
+    db = mongo.db()
+
+    res = await db["sensor_readings"].delete_one({"_id": to_oid(id)})
+
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Sensor reading not found")
+
+    return {"deleted": True}
