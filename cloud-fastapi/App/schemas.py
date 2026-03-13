@@ -84,3 +84,23 @@ class SensorReadingIn(BaseModel):
 class SensorReadingOut(SensorReadingIn):
     id: str
     created_at: datetime
+    
+# -------------------------
+# ACTUATORS
+# -------------------------
+
+from pydantic import BaseModel
+from datetime import datetime
+from typing import Optional
+
+
+class ActuatorCommandIn(BaseModel):
+    topic: str
+    payload: str
+    actuator_id: str
+
+
+class ActuatorCommandOut(ActuatorCommandIn):
+    id: str
+    status: str
+    created_at: datetime
