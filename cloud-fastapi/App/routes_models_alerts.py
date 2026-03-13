@@ -332,3 +332,51 @@ async def delete_sensor_reading(id: str):
         raise HTTPException(status_code=404, detail="Sensor reading not found")
 
     return {"deleted": True}
+
+# -------------------------
+# ACTUATOR COMMANDS
+# -------------------------
+
+@router.post("/actuators/command", response_model=schemas.ActuatorCommandOut)
+async def create_actuator_command(payload: schemas.ActuatorCommandIn):
+    db = mongo.db()
+
+    doc = payload.model_dump()
+    doc["status"] = "pending"
+    doc["created_at"] = datetime.utcnow()
+
+    res = await db["actuator_commands"].insert_one(doc)
+    cmd = await db["actuator_commands"].find_one({"_id": res.inserted_id})
+
+    return {
+        "id": str(cmd["_id"]),
+        "topic": cmd["topic"],
+        "payload": cmd["payload"],
+        "actuator_id": cmd["actuator_id"],
+        "status": cmd["status"],
+        "created_at": cmd["created_at"],
+    }
+
+
+@router.get("/actuators/commands/pending")
+async def get_pending_commands(limit: int = 20):
+    db = mongo.db()
+
+    cursor = db["actuator_commands"].find(
+        {"status": "pending"},
+        sort=[("created_at", 1)]
+    ).limit(limit)
+
+    commands = []
+
+    async for cmd in cursor:
+        commands.append({
+            "id": str(cmd["_id"]),
+            "topic": cmd["topic"],
+            "payload": cmd["payload"],
+            "actuator_id": cmd["actuator_id"],
+            "status": cmd["status"],
+            "created_at": cmd["created_at"],
+        })
+
+    return commands
