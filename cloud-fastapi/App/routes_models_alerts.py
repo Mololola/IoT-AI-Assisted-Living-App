@@ -337,6 +337,38 @@ async def delete_sensor_reading(id: str):
 # ACTUATOR COMMANDS
 # -------------------------
 
+@router.put("/actuators/commands/{id}/complete")
+async def complete_actuator_command(id: str):
+    db = mongo.db()
+    _id = to_oid(id)
+
+    cmd = await db["actuator_commands"].find_one({"_id": _id})
+
+    if not cmd:
+        raise HTTPException(status_code=404, detail="Command not found")
+
+    await db["actuator_commands"].update_one(
+        {"_id": _id},
+        {
+            "$set": {
+                "status": "executed",
+                "executed_at": datetime.utcnow()
+            }
+        }
+    )
+
+    updated = await db["actuator_commands"].find_one({"_id": _id})
+
+    return {
+        "id": str(updated["_id"]),
+        "topic": updated["topic"],
+        "payload": updated["payload"],
+        "actuator_id": updated["actuator_id"],
+        "status": updated["status"],
+        "executed_at": updated["executed_at"]
+    }
+    
+    
 @router.post("/actuators/command", response_model=schemas.ActuatorCommandOut)
 async def create_actuator_command(payload: schemas.ActuatorCommandIn):
     db = mongo.db()
