@@ -1,0 +1,49 @@
+/*
+ * Event-Driven Light Sensor Test (No MQTT)
+ * Visualizes Hysteresis and State Changes on the Serial Plotter.
+ */
+
+const int lightSensorPin = 34; 
+const int threshold = 200;      // Calibrated threshold
+const int hysteresis = 25;      // Buffer to prevent flickering
+
+bool isDaytime = false;
+bool lastState = false;
+
+void setup() {
+  Serial.begin(115200);
+  analogSetAttenuation(ADC_11db); 
+
+  // Initial reading
+  int initialRead = analogRead(lightSensorPin);
+  isDaytime = (initialRead > threshold);
+  lastState = isDaytime;
+
+  Serial.println("Raw_Value,Threshold,State_Indicator");
+}
+
+void loop() {
+  int currentRead = analogRead(lightSensorPin);
+
+  // Logic with hystersis 
+  if (!isDaytime && (currentRead > (threshold + hysteresis))) {
+    isDaytime = true;
+    Serial.println(">>> EVENT: Switched to DAYTIME <<<");
+  } 
+  else if (isDaytime && (currentRead < (threshold - hysteresis))) {
+    isDaytime = false;
+    Serial.println(">>> EVENT: Switched to NIGHTTIME <<<");
+  }
+
+  // Plotter
+  // Map the boolean state to 0 or 400 so it's visible on the graph
+  int plotState = isDaytime ? 400 : 0; 
+
+  Serial.print(currentRead);   // Blue line
+  Serial.print(",");
+  Serial.print(threshold);     // Red line (constant)
+  Serial.print(",");
+  Serial.println(plotState);   // Green line (the "Event" state)
+
+  delay(50); // Faster sampling for a smooth graph
+}

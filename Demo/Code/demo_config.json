@@ -1,0 +1,56 @@
+{
+  "info": "Bench Demo Config — Bedroom Night Wandering Detection",
+
+  "mqtt": {
+    "broker": "localhost",
+    "port": 1883,
+    "client_id_prefix": "RaspberryPi_Demo",
+
+    "sensors": {
+      "bedroom_pressure":  "home/bedroom/pressure",
+      "bedroom_pir":       "home/bedroom/PIR",
+      "bedroom_presence":  "home/bedroom/presence",
+      "bedroom_light":     "home/bedroom/light"
+    },
+
+    "actuators": {
+      "hallway_led": "home/hallway/led"
+    },
+
+    "led_status_topic": "home/hallway/led/status"
+  },
+
+  "thresholds": {
+    "pressure_occupied": 500,
+    "pressure_empty":    100,
+    "presence_near_cm":  50,
+    "presence_far_cm":   200
+  },
+
+  "ml": {
+    "sample_rate_hz": 2,
+    "window_size": 30,
+    "window_step": 5,
+    "contamination": 0.03,
+    "n_estimators": 150,
+    "detection_interval_sec": 3
+  },
+
+  "demo": {
+    "led_grace_period_sec": 5,
+    "alert_cooldown_sec": 30
+  },
+
+  "api": {
+    "base_url": "https://assisted-living-platform.onrender.com",
+    "timeout": 10
+  },
+
+  "paths": {
+    "model_file":  "models/demo_model.pkl",
+    "scaler_file": "models/demo_scaler.pkl",
+    "stats_file":  "models/demo_stats.json",
+    "alerts_dir":  "alerts",
+    "logs_dir":    "logs"
+  }
+}

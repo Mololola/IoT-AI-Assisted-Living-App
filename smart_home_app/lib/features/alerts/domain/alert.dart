@@ -102,8 +102,9 @@ class Alert {
     if (type.contains('sensor')) return 'sensors';
     if (type.contains('bathroom')) return 'bathroom';
     if (type.contains('kitchen') || type.contains('meal')) return 'kitchen';
-    if (type.contains('inactivity') || type.contains('no_activity'))
+    if (type.contains('inactivity') || type.contains('no_activity')) {
       return 'accessibility';
+    }
     if (type.contains('water')) return 'water_drop';
     if (type.contains('summary') || type.contains('daily')) return 'summarize';
     if (type.contains('ml_')) return 'psychology';

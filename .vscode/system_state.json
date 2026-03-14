@@ -1,0 +1,9 @@
+{
+  "mode": "normal",
+  "install_date": "2025-10-30T17:39:54.975621",
+  "model_version": 1,
+  "total_anomalies": 1023,
+  "training_samples": 600,
+  "training_start": "2025-10-30T17:39:54.976440",
+  "training_end": "2025-10-30T17:45:02.049233"
+}

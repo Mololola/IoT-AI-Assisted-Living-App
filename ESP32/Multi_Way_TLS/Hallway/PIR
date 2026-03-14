@@ -1,0 +1,246 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h> 
+#include <PubSubClient.h>
+#include <time.h>
+
+// ------------------------------------
+// 1. CONFIGURATION 
+// ------------------------------------
+const char* ssid = "IoT-Lab";            
+const char* password = "ELEC423_2526!";      
+const char* mqtt_server = "192.168.1.101"; 
+
+// CRUCIAL: Must match the Common Name (CN) generated on the Pi
+const char* mqtt_client_id = "ESP32_Front_Door_PIR"; 
+const char* mqtt_publish_topic = "home/frontdoor/PIR"; 
+
+// --- PIR PIN AND DEBOUNCING ---
+const int PIR_PIN = 2;                  
+const long DEBOUNCE_DELAY_MS = 3000;    
+
+// State Definitions
+enum RoomState {
+    OUT = 0, 
+    IN = 1   
+};
+
+// ------------------------------------
+// 2. MUTUAL TLS CREDENTIALS
+// ------------------------------------
+
+// 2a. The Root CA
+const char* root_ca = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDjzCCAnegAwIBAgIUPkCaskkmR6eJH1JlZyUTGyf2HAQwDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAyMjcwOTUwNDZaFw0zNjAyMjUwOTUwNDZaMFcxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxEDAOBgNVBAMMB01FTkdfQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+AoIBAQCk+nF0+rE0hT+iqftqnpSiK9h8PuFzhGAIZn5CLNUhhoDQ8z+h/34NETXD
+6VMBOJV/9LsTEk5HPCtA0G+xEi/8r9RlIG+bzY3JtTaMnVlZkaHsj9H5oHRlcAoo
+ygb7DdOri8SFmwglPt1Ehhp1VtgoxfZjqVTX+TJw/+CFsSki5L8t3PZHVfVXddlb
+LMDZ3HYbfytram0ajLSjNdc9VUCtXKXTXPMXFAKXF3kLdjLTVL7kqOqL8p6bJdcE
+/z1c/aVZ7wSHyQxdv4IZxGUX6W6TlG20W7ctO3ZRpx+n4o7+Wg3x64g+IqAr/MYf
+3cVGS93b/DFe20+HfLLtFdnNmFXVAgMBAAGjUzBRMB0GA1UdDgQWBBSwjLA0RgzF
+He54i9GWLKbkD4P1cTAfBgNVHSMEGDAWgBSwjLA0RgzFHe54i9GWLKbkD4P1cTAP
+BgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAt/6aVsCt4PwzthXLF
+aVc9v3CfvYVBQNmf33fYu6+ftkDRS5ja0mPVOEKYhjEW4g1o7pQIVzYpSN5RkXzv
+0elFCT8n9sQNTI2gOY5oG/HES/wQcGFvnXni5g7z2ZIu6zHr67qJsWlHuwMAVqIA
+5E5XZDDBeEhWEb7yfc3Gr4GXoPP6UPwoZNCjZDMrw209TTvxdLUL2i7c0aBLPeEU
+ScNdhCaN2fJWlmvB6OmN70TnC1rDwUDxKxKdHiv0TaW7i8G/fw7yeCajxmUTcoWR
+FRk5rhbIJ/mAIR20PdUjzvsDza3FIVTlThvZo6t8fQrVTzTZHrg30/zKo8K6YtZ6
+tSmw
+-----END CERTIFICATE-----
+)EOF";
+
+// 2b. The PIR Client Certificate
+const char* client_cert = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDizCCAnOgAwIBAgIUdKrpQl0A3VnP8WR/WeoleuRttKIwDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAzMDEyMDAyMjhaFw0zNjAyMjcyMDAyMjhaMGQxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxHTAbBgNVBAMMFEVTUDMyX0Zyb250X0Rvb3JfUElSMIIBIjANBgkqhkiG9w0B
+AQEFAAOCAQ8AMIIBCgKCAQEAzHZFbeiQofpvVuevPB0Ca34N8MVkCWE5/6v5vme+
+KbhY1Z//ujOgT2Pbhv+CImWbd1/xjRART7+e4Sbeq9uwBBKUuUsknH1/O+oBhvi4
+4YZPjc9ci9ID27GgD/8HoROdx81yY7m6GYLqCywVSA5rafK7O6ipP48eiu+1TA5u
+x10ThNz1O918X7RnqqBNJ+hNVRCmX56HKVmbmKu2iQM88Kxv3nGUjwgh2RcQ6bZC
+hNrMGq2FIDhXeQjKoXHQGRQAAG3pRHLvrStSkXSz7DoaJ/0LjQOWnZL9aUJjI1QN
+IJMkf1VHho5DiVt22PkGGeOKiorSj6WnHKXJ7Fn8fupJWQIDAQABo0IwQDAdBgNV
+HQ4EFgQUbqmIKWvgw972WdDyCPA8kqvh2KswHwYDVR0jBBgwFoAUsIywNEYMxR3u
+eIvRliym5A+D9XEwDQYJKoZIhvcNAQELBQADggEBADEjtU10vjZ3XGKZM17UdXBN
+UWN5C9A6GhOaRiLsNMYg9FuLBH7csMb3LdR2meOt56vJJ9QEx3kdWfW3m85z+F7r
+sBFtJcmICdNVbuIl7zartrYrlvkRpgHydhqqpE3y5uBOkFODmAWO3ZTZUEirqLoO
+DvhXScSm2uD7nwg4NV220S04bSGZklcSIv28ZKCgdHmm7ivyD8xdcTuDpzIwXPRU
+aJ8DderZLjtaBTtF9dR/Agp/ot9/rue/CEvqqB2hj1iL2fu5h+JiSdfqpeYS7vHq
+m8uZEzR0FTezG4qWSXpOQ1rUxL6Jm7nVPX6k60gwW9Wt7McXBy7lxxsowGZ3Eyc=
+-----END CERTIFICATE-----
+)EOF";
+
+// 2c. The PIR Client Private Key (Must add RSA!)
+const char* client_key = R"EOF(
+-----BEGIN PRIVATE KEY-----
+MIIEugIBADANBgkqhkiG9w0BAQEFAASCBKQwggSgAgEAAoIBAQDMdkVt6JCh+m9W
+5688HQJrfg3wxWQJYTn/q/m+Z74puFjVn/+6M6BPY9uG/4IiZZt3X/GNEBFPv57h
+Jt6r27AEEpS5SyScfX876gGG+Ljhhk+Nz1yL0gPbsaAP/wehE53HzXJjuboZguoL
+LBVIDmtp8rs7qKk/jx6K77VMDm7HXROE3PU73XxftGeqoE0n6E1VEKZfnocpWZuY
+q7aJAzzwrG/ecZSPCCHZFxDptkKE2swarYUgOFd5CMqhcdAZFAAAbelEcu+tK1KR
+dLPsOhon/QuNA5adkv1pQmMjVA0gkyR/VUeGjkOJW3bY+QYZ44qKitKPpaccpcns
+Wfx+6klZAgMBAAECgf8pqfAmoBLY7wTBMMpZ9Y9eAtHUaQ95hIEibb5L49gG/bRx
+06jIyLxiG8x1i0YkEZBx7Zsgo6WOGqjFjft8tHJUYh+W9+OoqpTCy2yEPyrCyhvB
+SgAR0zn2CrwTMQ+HmKJjlKSQAx4Tv27x198o+nHo+mLXmrGNF3JMiDbpc1zKQvqI
+gj2aDLoFjh/f5/tqJ3yxT5VqPfn/ri/vqghFgAujmB2Pj+iADaQsjBCS8lOFovx5
+NAevx72Sxjni2u6k0n+s0bHEoiw+OfAszd8CEjLqpI1IUkU+Qy0V3fEIV5hXfERv
+egV1X2B2xefx2jEvuFgDx0HgoviqPkgIA1wpqHcCgYEA8A0y1l6dyB+WsbbPuZSy
+RF/c+R3Od+QRpAI2KSARGjzEYX60PzQuM6cIYAjx6jBA+qwf+Dgpnkmy1uZtoUYV
+TjSa8bIhqH6xkkiP0o5b2PaPBdQThdo5lzB/MuZvD/51ScYYtWzlnTi5W03pebPb
+KcY4KU0CuOix9knVKhux4sMCgYEA2gvDxFqY4OJPs9fbGCJ9rHg89B9/ntsAtzhQ
+FX7elij/WAqgCp7s3YpIaE8gcDQRMJWzKAdAJ4A78iAJKevrLvJXScAlZt3/0E8Q
+0e4Zw0xhF0PIi/KgIkQAZeTOR3oNx3uD8HnfcFGIkrRSwwHc4ai7ptwaRDy2v3nQ
+mehyqbMCgYAXWNFG9DDYU+ouIp+VZxbne4NcXz/DfVUR5H0sBshjCuH2sYIKW6La
+tzYjUPtmUYcgWjlJxPyXPoe8SvECrHRKBOfE9hQ79QaEObZzPhFEysYiRPwZGp5b
+TAYzByJqJc92e2PP0WWLowa0EKHSimGYcITpz2miXk9gqtGmpMbqTQKBgGhu7BO2
+hLRpEF2FzEUR9/lMGX2fPIO8Rup6STkSa8+l0S684AxWNAKjwaxcAaBb/8OyX32T
+g3Gn5I5CM8FlYl446f/DzOYo++YsiFTT4nj8sx/ucjY9Pd9LjJlA7l+joMfja70Y
+0iC8nFoPjfgig0V9iGsRzm7SWYD5+iRNBeYrAoGAKrBa9qBvhukJ+wwBiBT1rSZV
+B0Aav18AA4lA1quVWj4AcfisAplS5t5yZ/vXJzgr4Z4Nhw+R5gLUzs15cM05nDo8
+/xsInDZoVS4iNq4It+5JvR3D/d9oBQWz5w9Nbchol4q8t9vsV97FKKIETfDt9Wwg
+9IgNutw6rOHM5d0g86E=
+-----END PRIVATE KEY-----
+)EOF";
+
+WiFiClientSecure espClient;
+PubSubClient client(espClient);
+
+RoomState currentRoomState = OUT;
+bool lastPIRState = LOW; 
+long lastMotionTime = 0; 
+
+// --- Function Prototypes ---
+void publishState(const char* state_str);
+void setup_wifi();
+void reconnect();
+
+// ------------------------------------
+// 3. HELPER FUNCTIONS
+// ------------------------------------
+
+void syncTime() {
+    configTime(0, 0, "pool.ntp.org", "time.google.com");
+    Serial.print("Syncing Clock for TLS: ");
+    time_t now = time(nullptr);
+    while (now < 1672531200) { 
+        delay(500);
+        Serial.print(".");
+        now = time(nullptr);
+    }
+    Serial.println("\n[OK] Time Synced.");
+}
+
+void setup_wifi() {
+    delay(10);
+    Serial.print("Connecting to ");
+    Serial.println(ssid);
+    
+    WiFi.begin(ssid, password);
+    
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+
+    Serial.println("");
+    Serial.println("WiFi connected");
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+}
+
+void reconnect() {
+    while (!client.connected()) {
+        Serial.print("Attempting STRICT mTLS connection...");
+        
+        if (client.connect(mqtt_client_id)) {
+            Serial.println("connected securely to broker!");
+            client.publish("home/status", "ESP32 Front Door PIR Online");
+        } else {
+            Serial.print("failed, rc=");
+            Serial.print(client.state());
+            Serial.println(" trying again in 5 seconds");
+            delay(5000);
+        }
+    }
+}
+
+// ------------------------------------
+// 4. PUBLISHING LOGIC
+// ------------------------------------
+void publishState(const char* state_str) {
+    if (client.connected()) {
+        client.publish(mqtt_publish_topic, state_str);
+        Serial.print("Secure MQTT Pub: State changed to ");
+        Serial.println(state_str);
+    }
+}
+
+// ------------------------------------
+// 5. MAIN LOGIC: Event-Driven State Handler
+// ------------------------------------
+void handleMotionDetection() {
+    long currentTime = millis();
+    bool currentPIRState = digitalRead(PIR_PIN);
+
+    if (currentPIRState == HIGH && lastPIRState == LOW && (currentTime - lastMotionTime > DEBOUNCE_DELAY_MS)) {
+        
+        lastMotionTime = currentTime; 
+        
+        if (currentRoomState == OUT) {
+            currentRoomState = IN;
+            Serial.println(">>> State Change: IN (Movement Detected)");
+            publishState("IN");
+        } else {
+            currentRoomState = OUT;
+            Serial.println(">>> State Change: OUT (Movement Detected - Toggling out)");
+            publishState("OUT");
+        }
+    }
+    lastPIRState = currentPIRState;
+}
+
+// ------------------------------------
+// 6. SETUP & LOOP
+// ------------------------------------
+void setup() {
+    Serial.begin(115200); 
+    pinMode(PIR_PIN, INPUT); 
+    
+    Serial.println("Front Door PIR Initialized.");
+    
+    setup_wifi();
+    syncTime();
+
+    // Load the Security Trio
+    espClient.setCACert(root_ca); 
+    espClient.setCertificate(client_cert); 
+    espClient.setPrivateKey(client_key);   
+    
+    // ESP32 v3.0 Handshake fix
+    espClient.setHandshakeTimeout(45); 
+
+    client.setServer(mqtt_server, 8883); // Secure Port
+    
+    Serial.print("Initial State: ");
+    Serial.println(currentRoomState == IN ? "IN" : "OUT");
+}
+
+void loop() {
+    if (!client.connected()) {
+        reconnect();
+    }
+    client.loop(); 
+
+    handleMotionDetection();
+
+    delay(100); 
+}

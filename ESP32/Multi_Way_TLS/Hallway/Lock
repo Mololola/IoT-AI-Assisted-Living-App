@@ -1,0 +1,218 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h> 
+#include <PubSubClient.h>
+#include "esp_wifi.h" 
+#include <time.h>
+
+// --- 1. CONFIGURATION ---
+const char* ssid = "IoT-Lab";            
+const char* password = "ELEC423_2526!";      
+const char* mqtt_server = "192.168.1.101"; // Verify IP!
+
+// CRUCIAL: Must match the Common Name (CN) generated on the Pi
+const char* mqtt_client_id = "ESP32_hallway_lock"; 
+
+const char* topic_cmd = "home/hallway/lock";
+const char* topic_status = "home/hallway/lock/status";
+
+const int solenoidPin = 23; 
+
+// --- 2. MUTUAL TLS CREDENTIALS ---
+
+// 2a. The Root CA
+const char* root_ca = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDjzCCAnegAwIBAgIUPkCaskkmR6eJH1JlZyUTGyf2HAQwDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAyMjcwOTUwNDZaFw0zNjAyMjUwOTUwNDZaMFcxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxEDAOBgNVBAMMB01FTkdfQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+AoIBAQCk+nF0+rE0hT+iqftqnpSiK9h8PuFzhGAIZn5CLNUhhoDQ8z+h/34NETXD
+6VMBOJV/9LsTEk5HPCtA0G+xEi/8r9RlIG+bzY3JtTaMnVlZkaHsj9H5oHRlcAoo
+ygb7DdOri8SFmwglPt1Ehhp1VtgoxfZjqVTX+TJw/+CFsSki5L8t3PZHVfVXddlb
+LMDZ3HYbfytram0ajLSjNdc9VUCtXKXTXPMXFAKXF3kLdjLTVL7kqOqL8p6bJdcE
+/z1c/aVZ7wSHyQxdv4IZxGUX6W6TlG20W7ctO3ZRpx+n4o7+Wg3x64g+IqAr/MYf
+3cVGS93b/DFe20+HfLLtFdnNmFXVAgMBAAGjUzBRMB0GA1UdDgQWBBSwjLA0RgzF
+He54i9GWLKbkD4P1cTAfBgNVHSMEGDAWgBSwjLA0RgzFHe54i9GWLKbkD4P1cTAP
+BgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAt/6aVsCt4PwzthXLF
+aVc9v3CfvYVBQNmf33fYu6+ftkDRS5ja0mPVOEKYhjEW4g1o7pQIVzYpSN5RkXzv
+0elFCT8n9sQNTI2gOY5oG/HES/wQcGFvnXni5g7z2ZIu6zHr67qJsWlHuwMAVqIA
+5E5XZDDBeEhWEb7yfc3Gr4GXoPP6UPwoZNCjZDMrw209TTvxdLUL2i7c0aBLPeEU
+ScNdhCaN2fJWlmvB6OmN70TnC1rDwUDxKxKdHiv0TaW7i8G/fw7yeCajxmUTcoWR
+FRk5rhbIJ/mAIR20PdUjzvsDza3FIVTlThvZo6t8fQrVTzTZHrg30/zKo8K6YtZ6
+tSmw
+-----END CERTIFICATE------
+)EOF";
+
+// 2b. The Lock Client Certificate
+const char* client_cert = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDiTCCAnGgAwIBAgIUdKrpQl0A3VnP8WR/WeoleuRttKgwDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAzMDIxMTE5NTBaFw0zNjAyMjgxMTE5NTBaMGIxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxGzAZBgNVBAMMEkVTUDMyX2hhbGx3YXlfbG9jazCCASIwDQYJKoZIhvcNAQEB
+BQADggEPADCCAQoCggEBAOLwmyFRveVWOkLCoYYyUoWhdK/lNP0a5rDyDG34pc/w
+iu8NPX6zGeNdHykvMe5yp0RZ3R+8o9BzEcmtF4CviqH+lgKq3NK9JAXjkFapeYoI
+x1CH2f4xZ9umfFf/tIGma1ZHBdZ2WBTAmTLQXK/Zn69+cY140q+R/jQo0FJo1zIm
+gwpUS1Be34Vq85q0fjxBElwul8z4a3SRGi+ymP9ROOAKJw6MvgfrOVEEF+KTrimr
+P9GW+PV9mcYGjdvqHsNyvlwHA/I0hl0qNE/5XHdd636xb4+2FeVr7IBEcxblpOa7
+0Kh5cNzXXO77Zboy7bUSTrOvwvtZLhfewLiSXcafkMMCAwEAAaNCMEAwHQYDVR0O
+BBYEFN9ZhP0RnvPpHK1fgc5tCMBFfDMIMB8GA1UdIwQYMBaAFLCMsDRGDMUd7niL
+0ZYspuQPg/VxMA0GCSqGSIb3DQEBCwUAA4IBAQCNOkm1O7Qox+UmqWQgMCYT1nmC
+MZmOdd+IuqFbOroBwE4sXB754/HwaqSqBGgtH3dd6PknFnT+j6kixAiYpvhNCq3Y
+P4LVuiTjczW9P4ChQ7/J4jRWYmyZKdOP8J4joJxUq1nH5Kt8+/U3o4E/PVdpTjCN
+t8hEJeFWL9sq7g5RX/3Y9jYblYLeBkbnsrzxMzYUECDhC4kvnwVy4bB4KOIlB6t1
+73s7yNFpWnsxE+4YT+5iRCQWg4R3+/JxYvLLoSTPieOBcO9KNBczdd9i0Zc8mNZk
+gD3XIu9fHaxdYWLEOpmH9GOldmurcRdupOhrCRNv9IHwLOtgdjTqVe3y1VcD
+-----END CERTIFICATE-----
+)EOF";
+
+// 2c. The Lock Client Private Key
+// MUST MANUALLY ADD 'RSA' TO THE HEADER AND FOOTER
+const char* client_key = R"EOF(
+-----BEGIN PRIVATE KEY-----
+MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDi8JshUb3lVjpC
+wqGGMlKFoXSv5TT9Guaw8gxt+KXP8IrvDT1+sxnjXR8pLzHucqdEWd0fvKPQcxHJ
+rReAr4qh/pYCqtzSvSQF45BWqXmKCMdQh9n+MWfbpnxX/7SBpmtWRwXWdlgUwJky
+0Fyv2Z+vfnGNeNKvkf40KNBSaNcyJoMKVEtQXt+FavOatH48QRJcLpfM+Gt0kRov
+spj/UTjgCicOjL4H6zlRBBfik64pqz/Rlvj1fZnGBo3b6h7Dcr5cBwPyNIZdKjRP
++Vx3Xet+sW+PthXla+yARHMW5aTmu9CoeXDc11zu+2W6Mu21Ek6zr8L7WS4X3sC4
+kl3Gn5DDAgMBAAECggEAD2mt74Zgskm37T7Qv499YUwE48laXvJLxqq5w2JGyKea
+l/+7NHavhGyXqDFnX71ztMWxqe0i5w5Zn+vck8XYUYY74/R8yOdFogzBidE6yvAr
+sUF4wbXTSuy0tzlLph6KXbK3J8ij1Mz72qKiGONb4AxjY+tXy8rLi/lVpLMwIlyw
+c0mvH7MsULcQl5M78EJHigKXN8blPLI7wEzvKEDfVvLLmzGiZGER1k8WXs5Z+53Q
+PsJRALxjO11WKXUVFvv3FAobGht35oRnxWTCkYtUn8F6lwLWO0HbKRRC/MtkoLM6
+uxDv93QWUfFeLTPj1ueJyYz4Vs6DEaz7JzAKfZUCaQKBgQD9nmzgHOmSLQKV/4gt
+HVi/DQAlLKJFpAILFssS3hFcttD+SxX0imfkbMOttq+n2H0uTeYCqKHdR3LMYG8u
+6XAdJsr3bCzrqG7rHT6oHwQ9ZDVMYKy/75qidHEUyqdYfuWN1Lyl4rQXdmb/dkIZ
+kIRHm7wCkMvszYVYldaIoY7gNQKBgQDlEg68RnqI/rg8jj4Ag30vsNWwUaY1QJJB
+DBi7CHVuFlm9CcqNjwdRBC1H101KIRvmziQfBJjKXq5a4xvGfo7ZHMewBuNtRRO6
+SNeUSqrhv0KLfPHpxM9Aj1ar8KhGTbu4xhFlU0h/KDEBo3g3inMvlEGiLROeG+5+
+9aFznuk8FwKBgGvoOBKyun5DQFJpwprPXa8L7P/kGbbfrS7ip8yDR4fXENzhPZoq
+OUHrNOZ4UAxuA/Trl+2Rqizn9WQXs7aWA+mjU8Ap+oLZyzel3b7SU497T2ILz/Rq
+EbUFLgfWoZT5iNnrpcg+yLki23fd7QnLfzyoejntOZarawzh08GWW5/xAoGAGnoO
+1/YxfZorg1xRkE+ibZu750hYtLkE7p3OUff1UsckkjQKhHguuU+JSE97cIEJL5FO
+HYOzgViWQI0VjcjdC/1Gm3MAYIXmdNasjEhhHfy0XVkQwRttdSHcO71yRcYAV6gV
+JKgOrhvgJjdV0t2e2LYDLBKXvOOvml8bzThl7vsCgYBpx9P0Py+dugX4WOlQDuuV
+RTsT79pa1EYJ6SYy7LZ7NdNq1H5Rr7awWkbbIFozbhR3HZ1kqKz93xqrcNI362nQ
+koShxX2IfyGRptSdFCA3kLXaR9u2oZTHAmhatw6aIY/5oQpv8WVT4BT0YfKNaRKZ
+r9wQmiriwJDIrBNscsx/Jw==
+-----END PRIVATE KEY-----
+)EOF";
+
+WiFiClientSecure espClient;
+PubSubClient client(espClient);
+
+// --- 3. HELPER FUNCTIONS ---
+
+void syncTime() {
+    configTime(0, 0, "pool.ntp.org", "time.google.com");
+    Serial.print("Syncing Clock for TLS (May take longer at 80MHz): ");
+    time_t now = time(nullptr);
+    while (now < 1672531200) { 
+        delay(500);
+        Serial.print(".");
+        now = time(nullptr);
+    }
+    Serial.println("\n[OK] Time Synced.");
+}
+
+void setup_wifi() {
+    delay(10);
+    WiFi.setSleep(true); // Enable Modem Sleep 
+    WiFi.begin(ssid, password);
+    
+    int retry_count = 0;
+    while (WiFi.status() != WL_CONNECTED && retry_count < 20) { 
+        delay(500); 
+        Serial.print("."); 
+        retry_count++;
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+        WiFi.setTxPower(WIFI_POWER_8_5dBm); // Save ~80mA spikes
+        Serial.println("\nWiFi Connected");
+    }
+}
+
+// --- 4. SECURE MQTT COMMAND HANDLER ---
+void callback(char* topic, byte* payload, unsigned int length) {
+    String message;
+    for (int i = 0; i < length; i++) { message += (char)payload[i]; }
+    message.toUpperCase();
+
+    Serial.println("Secure Lock Command Received: " + message);
+
+    if (message == "UNLOCK" || message == "U") {
+        Serial.println("[EVENT] SECURE Pulse Unlock...");
+        digitalWrite(solenoidPin, HIGH); // Engage MOSFET 
+        
+        client.publish(topic_status, "UNLOCKED_PULSE");
+        
+        delay(2000); // 2-second safety pulse 
+        
+        digitalWrite(solenoidPin, LOW); // Disengage 
+        client.publish(topic_status, "LOCKED");
+        Serial.println("[STATUS] Auto-Relocked");
+    } 
+    else if (message == "LOCK" || message == "L") {
+        digitalWrite(solenoidPin, LOW); // Force Secure 
+        client.publish(topic_status, "LOCKED");
+        Serial.println("[STATUS] Forced Lock Confirmed");
+    }
+}
+
+// --- 5. SECURE RECONNECTION LOGIC ---
+void reconnect() {
+    while (!client.connected()) {
+        Serial.print("Attempting STRICT mTLS Lock connection...");
+        if (client.connect(mqtt_client_id)) {
+            Serial.println("connected securely!");
+            client.publish(topic_status, "LOCKED_BOOT"); // Publish boot state
+            client.subscribe(topic_cmd); // Re-subscribe to commands
+            Serial.println("Subscribed to command topic.");
+        } else {
+            Serial.print("failed, rc=");
+            Serial.print(client.state());
+            delay(5000);
+        }
+    }
+}
+
+// --- 6. MAIN SETUP & LOOP ---
+void setup() {
+    setCpuFrequencyMhz(80); // Underclock for 3x AA stability 
+    
+    pinMode(solenoidPin, OUTPUT);
+    digitalWrite(solenoidPin, LOW); // FAIL-SAFE: Start LOCKED 
+    
+    Serial.begin(115200);
+    
+    unsigned long startAttemptTime = millis();
+    while (!Serial && millis() - startAttemptTime < 2000) { delay(100); }
+    
+    setup_wifi();
+    syncTime();
+
+    // Load Security Trio
+    espClient.setCACert(root_ca);
+    espClient.setCertificate(client_cert);
+    espClient.setPrivateKey(client_key);
+    
+    // Increased timeout to 60s for 80MHz CPU RSA math
+    espClient.setHandshakeTimeout(60); 
+
+    client.setServer(mqtt_server, 8883); // Secure Port
+    client.setCallback(callback);
+    
+    Serial.println("Secure Lock Node Active.");
+}
+
+void loop() {
+    if (!client.connected()) reconnect();
+    client.loop();
+    delay(20); // Allow system to idle in Light Sleep
+}

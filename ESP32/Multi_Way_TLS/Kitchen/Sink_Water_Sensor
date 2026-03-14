@@ -1,0 +1,212 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h> 
+#include <PubSubClient.h>
+#include <time.h>
+
+// --- 1. CONFIGURATION --- 
+const char* ssid = "IoT-Lab";            
+const char* password = "ELEC423_2526!";      
+const char* mqtt_server = "192.168.1.101"; // Verify this IP (.100 vs .101)
+
+// CRUCIAL: Must match the Common Name (CN) generated on the Pi
+const char* mqtt_client_id = "ESP32_Kitchen_Sink"; 
+const char* mqtt_publish_topic = "home/kitchen/sink"; 
+
+const int waterSensorPin = 32;
+
+// Thresholds for Water Detection
+const int threshold_WaterPresent = 705; 
+const int threshold_Flood        = 550; 
+const int hysteresis = 20;              
+
+enum WaterState { DRY, WATER_PRESENT, FLOOD_ALERT };
+WaterState currentState = DRY;
+WaterState lastState    = DRY;
+
+// --- 2. MUTUAL TLS CREDENTIALS ---
+
+// 2a. The Root CA 
+const char* root_ca = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDjzCCAnegAwIBAgIUPkCaskkmR6eJH1JlZyUTGyf2HAQwDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAyMjcwOTUwNDZaFw0zNjAyMjUwOTUwNDZaMFcxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxEDAOBgNVBAMMB01FTkdfQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+AoIBAQCk+nF0+rE0hT+iqftqnpSiK9h8PuFzhGAIZn5CLNUhhoDQ8z+h/34NETXD
+6VMBOJV/9LsTEk5HPCtA0G+xEi/8r9RlIG+bzY3JtTaMnVlZkaHsj9H5oHRlcAoo
+ygb7DdOri8SFmwglPt1Ehhp1VtgoxfZjqVTX+TJw/+CFsSki5L8t3PZHVfVXddlb
+LMDZ3HYbfytram0ajLSjNdc9VUCtXKXTXPMXFAKXF3kLdjLTVL7kqOqL8p6bJdcE
+/z1c/aVZ7wSHyQxdv4IZxGUX6W6TlG20W7ctO3ZRpx+n4o7+Wg3x64g+IqAr/MYf
+3cVGS93b/DFe20+HfLLtFdnNmFXVAgMBAAGjUzBRMB0GA1UdDgQWBBSwjLA0RgzF
+He54i9GWLKbkD4P1cTAfBgNVHSMEGDAWgBSwjLA0RgzFHe54i9GWLKbkD4P1cTAP
+BgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAt/6aVsCt4PwzthXLF
+aVc9v3CfvYVBQNmf33fYu6+ftkDRS5ja0mPVOEKYhjEW4g1o7pQIVzYpSN5RkXzv
+0elFCT8n9sQNTI2gOY5oG/HES/wQcGFvnXni5g7z2ZIu6zHr67qJsWlHuwMAVqIA
+5E5XZDDBeEhWEb7yfc3Gr4GXoPP6UPwoZNCjZDMrw209TTvxdLUL2i7c0aBLPeEU
+ScNdhCaN2fJWlmvB6OmN70TnC1rDwUDxKxKdHiv0TaW7i8G/fw7yeCajxmUTcoWR
+FRk5rhbIJ/mAIR20PdUjzvsDza3FIVTlThvZo6t8fQrVTzTZHrg30/zKo8K6YtZ6
+tSmw
+-----END CERTIFICATE------
+)EOF";
+
+// 2b. The Kitchen Sink Client Certificate
+const char* client_cert = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDiTCCAnGgAwIBAgIUdKrpQl0A3VnP8WR/WeoleuRttKcwDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAzMDIxMTEyMjNaFw0zNjAyMjgxMTEyMjNaMGIxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxGzAZBgNVBAMMEkVTUDMyX0tpdGNoZW5fU2luazCCASIwDQYJKoZIhvcNAQEB
+BQADggEPADCCAQoCggEBAN0yr8r4SJU9GVpPv6z6o0qr+EAFAeIIjNe46s8mYG+P
+i4jrMgVRCjaASRlT/x0Eax1QhZOIpGa2kc4PMkRLmV8GU63WlMD/zkF3heHlVEs4
+v74LeqaT1YjskfZ/nbrSeyRdUiTP+eWDgYi7BPz5Nr30XAgG9xDM1BKlM5I1is+C
+lowXl6AdpJoF+oo7wz2u0x5au2q8mslEiUcMOqyylcRB0wFxyFFoAYD5RQse8J8U
+Q6b/Q8ZJPTDZtelN+dabfR5Gse4nCxI+s5DoZ6Ug/5jUc3lwvmSPopSfSXh7tEl8
+0SismrWB1QVBdB+/55tWWLEgMy2nKQhCyK/qWGKRjxUCAwEAAaNCMEAwHQYDVR0O
+BBYEFEvVy7b06PPiafoXpkdlEYRc2giVMB8GA1UdIwQYMBaAFLCMsDRGDMUd7niL
+0ZYspuQPg/VxMA0GCSqGSIb3DQEBCwUAA4IBAQB0fxLehLaKD9Xq46093LJw/1OB
+gdX2JoZtJehphi7aku2EdZyGNv5i28ifveKOgCjgIgd+sr8xEd87B477WIE4+9tH
+3epkb36hBKMAr6kz2rCuyO+8maEtW94QFz2TaB8wQhWmUcZ38THjW5cdGxkL3cLL
+jdiBPWKuiJ6rfDph6r0nwij08lScMNMl+itFEBOcxrpDAaJEHCDoydfYeBnAiLN2
+vHbJjR1pjqigCCf8qRexm9cNyNjD+hJ2ya9GNI8eetHiKii3MPb8i36BS2RmJIXm
+29A5yfnKaspSazltBi1RtOEW+4ABiaF4/pAMMkOXVnJpIE4JvbOQN1xrKAgM
+-----END CERTIFICATE-----
+)EOF";
+
+// 2c. The Kitchen Sink Client Private Key
+// MUST MANUALLY ADD 'RSA' TO THE HEADER AND FOOTER
+const char* client_key = R"EOF(
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDdMq/K+EiVPRla
+T7+s+qNKq/hABQHiCIzXuOrPJmBvj4uI6zIFUQo2gEkZU/8dBGsdUIWTiKRmtpHO
+DzJES5lfBlOt1pTA/85Bd4Xh5VRLOL++C3qmk9WI7JH2f5260nskXVIkz/nlg4GI
+uwT8+Ta99FwIBvcQzNQSpTOSNYrPgpaMF5egHaSaBfqKO8M9rtMeWrtqvJrJRIlH
+DDqsspXEQdMBcchRaAGA+UULHvCfFEOm/0PGST0w2bXpTfnWm30eRrHuJwsSPrOQ
+6GelIP+Y1HN5cL5kj6KUn0l4e7RJfNEorJq1gdUFQXQfv+ebVlixIDMtpykIQsiv
+6lhikY8VAgMBAAECggEAYneL1fjMptK6FH/nvaMdScJgEm+oNOzFdcp1jJ1y1Ha8
+EMlSTReUSkq1P7cqm8o5vKT5sYFkXezr3yTYpZpZvfldCse5FGlLcc05JiQmcA3l
+HT6S7NBmgDt/hpGsr1u/QaLhTE3g2pC9+xX11H9EJS9AQLqJBUuJJHuyB2YaUuDl
+LGYBMb4RHwehQJpzuwnYivzrHpWrTPMBg0jXtSdxZcjvpV25LYZPgPhpcbwQ4Qfe
+lNCMBCvtHkWgHzHiMaE1uJRcarudSqsoJBf3KGLuytCZL+O0oXluMjSKsLEhCMJD
+ZqMOtrIsVNwhV/4YgHTWLyNbzfPiNkODPyO7qjVfSQKBgQDxjtP0TmEwrKLJ11MD
+QsRpZQXVKjmV5EcLrY6aaJx0D4koRhRZD09fFBVOZmeqb8TrpFt4ahOFeAmq1fe8
+6Y1z6TZnfikBsdDsMXm5BZXXk7qhhwrqCxdW65hXS7deAYk/iN3kPMHQwbbjZyHA
+Zl8Cb3LBmBdSp47yLciAS1wHXwKBgQDqbD1A3eDcetU1k1/pHxtzdPHLWjcm6xPK
+3n5juAvBPbZ16/LU91+UX8yMXC/EJe6GSIfz9twdPwcPBF3lJVMwK3sOMltd2/na
+0xpGF9RhsObj7mN5JmY0W3NBhkpZq060NQevdDJl0IPt/2a+bedcZjPri1m/TGHU
+59M7LYGCCwKBgQDtRILS5K44dkoMAlHK0SlF8PHyuOAJaEmUoeyBpKGQqrXpdjSE
+ajJnTL3E3XeUBOcjIrSqKV91aTvtrvABglLr+LX0oAo9XOC/L7XFVEQjlTrrcE77
+JtvNB+sCTCAX2WBrpM93YWpq1+wBoAqaBrPqG3hXykGWcXlKTkg0JFGH9wKBgQDN
+6hv4Aa4GHYNxFy41WRTE2yGVbX5qmi19kujUcRMqQCoo9QQN2+lCLNBBLqzqkCMw
+I0AApYP90KJDp6NOp/Wlp1vlQYiOLq8Pb0Vx8nalBT4bUwhfn8JBFV9tXCetElQE
+6VwB24B1fK6WfTTj6yhCOqg6q+I+rjp1SNl77uIGtwKBgBnZAXkSI7Z3dF3NaM3Q
+A7Lu/gRjIOBVZpAd4TRHzdcOsUSGc0ym7RQIrxzRK4qz2w2GtdVSTNATlJdRHKlr
+CX8AL0ruAgq+zObWPYnwvQV7la2yYZDlCa272vhv0Ek94wJsnzJlAJJaoRU6ZVxf
+7A/qtwi1S/d1bTxFD/w+mGfH
+-----END PRIVATE KEY-----
+)EOF";
+
+WiFiClientSecure espClient;
+PubSubClient client(espClient);
+
+// --- 3. HELPER FUNCTIONS ---
+
+void syncTime() {
+  configTime(0, 0, "pool.ntp.org", "time.google.com");
+  Serial.print("Syncing Clock for TLS: ");
+  time_t now = time(nullptr);
+  while (now < 1672531200) { 
+    delay(500);
+    Serial.print(".");
+    now = time(nullptr);
+  }
+  Serial.println("\n[OK] Time Synced.");
+}
+
+void setup_wifi() {
+  delay(10);
+  Serial.print("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) { 
+    delay(500); 
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected.");
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Attempting STRICT mTLS connection...");
+    if (client.connect(mqtt_client_id)) {
+      Serial.println("CONNECTED SECURELY!");
+      client.publish("home/status", "ESP32 Kitchen Sink Online");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" - Retrying in 5s...");
+      delay(5000); 
+    }
+  }
+}
+
+// --- 4. MAIN LOGIC ---
+
+void setup() {
+  Serial.begin(115200);
+  analogSetAttenuation(ADC_11db);
+  
+  setup_wifi();
+  syncTime();
+
+  // Load the Security Trio
+  espClient.setCACert(root_ca); 
+  espClient.setCertificate(client_cert); 
+  espClient.setPrivateKey(client_key);   
+  
+  // ESP32 v3.0 Handshake fix
+  espClient.setHandshakeTimeout(45); 
+
+  client.setServer(mqtt_server, 8883); // Using secure port
+  Serial.println("Kitchen Sink Secure Monitor Active.");
+}
+
+void loop() {
+  if (!client.connected()) reconnect();
+  client.loop();
+
+  int val = analogRead(waterSensorPin);
+
+  WaterState newState = currentState;
+
+  if (val < threshold_Flood) {
+    newState = FLOOD_ALERT;
+  } 
+  else if (val < threshold_WaterPresent && val >= (threshold_Flood + hysteresis)) {
+    newState = WATER_PRESENT;
+  } 
+  else if (val >= (threshold_WaterPresent + hysteresis)) {
+    newState = DRY;
+  }
+
+  // Event Driven: Only publish on state change
+  if (newState != lastState) {
+    String message;
+    if (newState == DRY)           message = "Dry";
+    if (newState == WATER_PRESENT) message = "Water Detected";
+    if (newState == FLOOD_ALERT)   message = "FLOOD ALERT";
+
+    Serial.print("Secure Transition to: ");
+    Serial.println(message);
+    
+    // Fixed: Now publishes to the correct kitchen topic
+    client.publish(mqtt_publish_topic, message.c_str());
+    
+    lastState = newState;
+    currentState = newState;
+  }
+
+  delay(500); 
+}

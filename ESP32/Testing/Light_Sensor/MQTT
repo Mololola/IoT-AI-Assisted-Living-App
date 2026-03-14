@@ -1,0 +1,78 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+// Wifi Configuration 
+const char* ssid = "IoT-Lab";            // Your WiFi Network Name
+const char* password = "ELEC423_2526!";      // Your WiFi Password
+const char* mqtt_server = "192.168.1.100";  // IP address
+
+const char* mqtt_client_id = "ESP32_Light_Sensor_01"; 
+const char* mqtt_publish_topic = "home/livingroom/light"; 
+
+const int lightSensorPin = 34; 
+const int threshold = 200;      
+const int hysteresis = 30;     // Increased slightly for better stability
+
+// State Tracking 
+bool isDaytime = false;        
+bool lastState = false;       
+bool firstRun = true;          // Ensures inital state is sent on boot
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+void setup() {
+  Serial.begin(115200);
+  analogSetAttenuation(ADC_11db); 
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+}
+
+void loop() {
+  if (!client.connected()) reconnect();
+  client.loop();
+
+  int currentRead = analogRead(lightSensorPin);
+
+  // Logic with hystersis 
+  if (!isDaytime && (currentRead > (threshold + hysteresis))) {
+    isDaytime = true;
+  } 
+  else if (isDaytime && (currentRead < (threshold - hysteresis))) {
+    isDaytime = false;
+  }
+
+  // Publish when there is a change 
+  if (isDaytime != lastState || firstRun) {
+    String payload = isDaytime ? "Day" : "Night";
+    
+    Serial.print("State Change Detected: ");
+    Serial.println(payload);
+    
+    // Publishing to a specific state topic
+    client.publish("home/livingroom/light", payload.c_str());
+    
+    lastState = isDaytime;
+    firstRun = false; 
+  }
+
+  delay(500); // Check twice a second
+}
+
+void setup_wifi() {
+  delay(10);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) { delay(500); }
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    if (client.connect("ESP32_Light_Node")) {
+      // Re-send state upon reconnection to ensure Pi is synced
+      String payload = isDaytime ? "Day" : "Night";
+      client.publish("home/livingroom/light_status", payload.c_str());
+    } else {
+      delay(5000);
+    }
+  }
+}

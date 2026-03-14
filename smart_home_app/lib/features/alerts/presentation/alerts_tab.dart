@@ -1,11 +1,14 @@
 // FILE: lib/features/alerts/presentation/alerts_tab.dart
-// UI for the Alerts tab — shows list of alerts from the backend
-// with color-coded severity and acknowledge button.
+// UPDATED: Alert lifecycle (active alerts only) + actuator action buttons
+// + link to analytics screen
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/alert_providers.dart';
 import '../domain/alert.dart';
+import '../../actuators/domain/actuator.dart';
+import '../../actuators/data/actuator_providers.dart';
+import '../../analytics/presentation/analytics_screen.dart';
 import 'package:intl/intl.dart';
 
 class AlertsTab extends ConsumerWidget {
@@ -19,20 +22,86 @@ class AlertsTab extends ConsumerWidget {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (error, _) => _buildErrorState(context, ref, error),
       data: (alerts) {
-        if (alerts.isEmpty) {
-          return _buildEmptyState(context, ref);
-        }
-        return RefreshIndicator(
-          onRefresh: () async {
-            await ref.read(alertControllerProvider.notifier).loadAlerts();
-          },
-          child: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: alerts.length,
-            itemBuilder: (context, index) => _AlertCard(alert: alerts[index]),
-          ),
+        // Filter to active alerts: unacknowledged OR created in last 24 hours
+        final now = DateTime.now();
+        final activeAlerts = alerts.where((a) {
+          if (!a.acknowledged) return true;
+          return now.difference(a.timestamp).inHours < 24;
+        }).toList();
+
+        return Column(
+          children: [
+            // ── Top bar with analytics button ──
+            _buildTopBar(context, ref, alerts.length, activeAlerts.length),
+
+            // ── Alert list ──
+            Expanded(
+              child: activeAlerts.isEmpty
+                  ? _buildEmptyState(context, ref)
+                  : RefreshIndicator(
+                      onRefresh: () async {
+                        await ref
+                            .read(alertControllerProvider.notifier)
+                            .loadAlerts();
+                      },
+                      child: ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        itemCount: activeAlerts.length,
+                        itemBuilder: (context, index) =>
+                            _AlertCard(alert: activeAlerts[index]),
+                      ),
+                    ),
+            ),
+          ],
         );
       },
+    );
+  }
+
+  Widget _buildTopBar(
+    BuildContext context,
+    WidgetRef ref,
+    int total,
+    int active,
+  ) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+      child: Row(
+        children: [
+          Text(
+            '$active active',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+          ),
+          if (total > active)
+            Text(
+              ' · ${total - active} archived',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: Colors.grey[400]),
+            ),
+          const Spacer(),
+          IconButton(
+            icon: const Icon(Icons.refresh, size: 20),
+            onPressed: () {
+              ref.read(alertControllerProvider.notifier).loadAlerts();
+            },
+            tooltip: 'Refresh',
+          ),
+          IconButton(
+            icon: const Icon(Icons.analytics_outlined, size: 20),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => const AnalyticsScreen(),
+                ),
+              );
+            },
+            tooltip: 'View Analytics',
+          ),
+        ],
+      ),
     );
   }
 
@@ -43,21 +112,38 @@ class AlertsTab extends ConsumerWidget {
         children: [
           Icon(Icons.check_circle_outline, size: 64, color: Colors.green[300]),
           const SizedBox(height: 16),
-          Text('No alerts', style: Theme.of(context).textTheme.titleLarge),
+          Text('All clear', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
           Text(
-            'Everything looks normal',
+            'No active alerts right now',
             style: Theme.of(
               context,
             ).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
           ),
           const SizedBox(height: 24),
-          OutlinedButton.icon(
-            onPressed: () {
-              ref.read(alertControllerProvider.notifier).loadAlerts();
-            },
-            icon: const Icon(Icons.refresh),
-            label: const Text('Refresh'),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () {
+                  ref.read(alertControllerProvider.notifier).loadAlerts();
+                },
+                icon: const Icon(Icons.refresh),
+                label: const Text('Refresh'),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => const AnalyticsScreen(),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.analytics_outlined),
+                label: const Text('View History'),
+              ),
+            ],
           ),
         ],
       ),
@@ -109,13 +195,22 @@ class AlertsTab extends ConsumerWidget {
 
 // ────────────────────── Alert Card Widget ──────────────────────
 
-class _AlertCard extends ConsumerWidget {
+class _AlertCard extends ConsumerStatefulWidget {
   final Alert alert;
-
   const _AlertCard({required this.alert});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_AlertCard> createState() => _AlertCardState();
+}
+
+class _AlertCardState extends ConsumerState<_AlertCard> {
+  final Map<String, bool> _commandSent = {};
+
+  @override
+  Widget build(BuildContext context) {
+    final alert = widget.alert;
+    final actuatorActions = ActuatorRegistry.actionsForAlert(alert.ruleType);
+
     return Card(
       elevation: alert.isUrgent ? 4 : 1,
       margin: const EdgeInsets.only(bottom: 12),
@@ -131,18 +226,20 @@ class _AlertCard extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Header: severity badge + timestamp ──
+            // ── Header: severity badge + type + time ──
             Row(
               children: [
                 _SeverityBadge(severity: alert.severity),
                 const SizedBox(width: 8),
-                Text(
-                  alert.displayRuleType,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                Expanded(
+                  child: Text(
+                    alert.displayRuleType,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-                const Spacer(),
                 Text(
                   _formatTime(alert.timestamp),
                   style: Theme.of(
@@ -185,9 +282,91 @@ class _AlertCard extends ConsumerWidget {
               ),
             ],
 
+            // ── Actuator Action Buttons ──
+            if (actuatorActions.isNotEmpty && !alert.acknowledged) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.electric_bolt,
+                          size: 16,
+                          color: Colors.orange[800],
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Quick Actions',
+                          style: TextStyle(
+                            color: Colors.orange[800],
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: actuatorActions.map((action) {
+                        final key = '${alert.id}_${action.actuator.id}';
+                        final sent = _commandSent[key] == true;
+
+                        return _ActuatorButton(
+                          actuatorName: action.actuator.name,
+                          commandLabel: action.command.label,
+                          sent: sent,
+                          onPressed: () async {
+                            final repo = ref.read(actuatorRepositoryProvider);
+                            final success = await repo.sendCommand(
+                              action.actuator,
+                              action.command,
+                            );
+                            if (success) {
+                              setState(() => _commandSent[key] = true);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      '${action.actuator.name}: ${action.command.label}',
+                                    ),
+                                    duration: const Duration(seconds: 2),
+                                  ),
+                                );
+                              }
+                            } else {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'Failed to send command to ${action.actuator.name}',
+                                    ),
+                                    backgroundColor: Colors.red[400],
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
             const SizedBox(height: 12),
 
-            // ── Footer: ack status or ack button ──
+            // ── Footer: acknowledge ──
             if (alert.acknowledged)
               Row(
                 children: [
@@ -218,7 +397,7 @@ class _AlertCard extends ConsumerWidget {
   }
 
   Color get _severityColor {
-    switch (alert.severity) {
+    switch (widget.alert.severity) {
       case 'HIGH':
         return Colors.red;
       case 'MEDIUM':
@@ -239,7 +418,45 @@ class _AlertCard extends ConsumerWidget {
   }
 }
 
-// ────────────────────── Severity Badge Widget ──────────────────────
+// ────────────────────── Actuator Button ──────────────────────
+
+class _ActuatorButton extends StatelessWidget {
+  final String actuatorName;
+  final String commandLabel;
+  final bool sent;
+  final VoidCallback onPressed;
+
+  const _ActuatorButton({
+    required this.actuatorName,
+    required this.commandLabel,
+    required this.sent,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: sent ? null : onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: sent ? Colors.green[700] : Colors.orange[800],
+        side: BorderSide(
+          color: sent
+              ? Colors.green.withOpacity(0.5)
+              : Colors.orange.withOpacity(0.5),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        visualDensity: VisualDensity.compact,
+      ),
+      icon: Icon(sent ? Icons.check : Icons.electric_bolt, size: 16),
+      label: Text(
+        sent ? '$actuatorName ✓' : '$commandLabel $actuatorName',
+        style: const TextStyle(fontSize: 12),
+      ),
+    );
+  }
+}
+
+// ────────────────────── Severity Badge ──────────────────────
 
 class _SeverityBadge extends StatelessWidget {
   final String severity;

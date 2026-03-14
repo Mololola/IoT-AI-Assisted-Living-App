@@ -1,0 +1,187 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h> 
+#include <PubSubClient.h>
+#include <time.h> 
+
+// --- 1. CONFIGURATION --- 
+const char* ssid = "IoT-Lab";             
+const char* password = "ELEC423_2526!";       
+const char* mqtt_server = "192.168.1.101";  
+
+// CRUCIAL: Must match the Common Name (CN) generated on the Pi
+const char* mqtt_client_id = "ESP32_livingroom_pressure"; 
+const char* mqtt_publish_topic = "home/livingroom/pressure";  
+
+const int pressurePin = 33;    
+const int threshold = 40;      
+int lastPressure = 0;          
+
+// --- 2. MUTUAL TLS CREDENTIALS ---
+
+// 2a. The Root CA (Same as the bedroom sensor)
+const char* root_ca = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDjzCCAnegAwIBAgIUPkCaskkmR6eJH1JlZyUTGyf2HAQwDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAyMjcwOTUwNDZaFw0zNjAyMjUwOTUwNDZaMFcxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxEDAOBgNVBAMMB01FTkdfQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+AoIBAQCk+nF0+rE0hT+iqftqnpSiK9h8PuFzhGAIZn5CLNUhhoDQ8z+h/34NETXD
+6VMBOJV/9LsTEk5HPCtA0G+xEi/8r9RlIG+bzY3JtTaMnVlZkaHsj9H5oHRlcAoo
+ygb7DdOri8SFmwglPt1Ehhp1VtgoxfZjqVTX+TJw/+CFsSki5L8t3PZHVfVXddlb
+LMDZ3HYbfytram0ajLSjNdc9VUCtXKXTXPMXFAKXF3kLdjLTVL7kqOqL8p6bJdcE
+/z1c/aVZ7wSHyQxdv4IZxGUX6W6TlG20W7ctO3ZRpx+n4o7+Wg3x64g+IqAr/MYf
+3cVGS93b/DFe20+HfLLtFdnNmFXVAgMBAAGjUzBRMB0GA1UdDgQWBBSwjLA0RgzF
+He54i9GWLKbkD4P1cTAfBgNVHSMEGDAWgBSwjLA0RgzFHe54i9GWLKbkD4P1cTAP
+BgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAt/6aVsCt4PwzthXLF
+aVc9v3CfvYVBQNmf33fYu6+ftkDRS5ja0mPVOEKYhjEW4g1o7pQIVzYpSN5RkXzv
+0elFCT8n9sQNTI2gOY5oG/HES/wQcGFvnXni5g7z2ZIu6zHr67qJsWlHuwMAVqIA
+5E5XZDDBeEhWEb7yfc3Gr4GXoPP6UPwoZNCjZDMrw209TTvxdLUL2i7c0aBLPeEU
+ScNdhCaN2fJWlmvB6OmN70TnC1rDwUDxKxKdHiv0TaW7i8G/fw7yeCajxmUTcoWR
+FRk5rhbIJ/mAIR20PdUjzvsDza3FIVTlThvZo6t8fQrVTzTZHrg30/zKo8K6YtZ6
+tSmw
+-----END CERTIFICATE------
+)EOF";
+
+// 2b. The Living Room Client Certificate
+const char* client_cert = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDkDCCAnigAwIBAgIUdKrpQl0A3VnP8WR/WeoleuRttLAwDQYJKoZIhvcNAQEL
+BQAwVzELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEQMA4GA1UEAwwHTUVOR19DQTAeFw0y
+NjAzMDMxMTU4NDFaFw0zNjAyMjkxMTU4NDFaMGkxCzAJBgNVBAYTAkFVMRMwEQYD
+VQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBM
+dGQxIjAgBgNVBAMMGUVTUDMyX2xpdmluZ3Jvb21fcHJlc3N1cmUwggEiMA0GCSqG
+SIb3DQEBAQUAA4IBDwAwggEKAoIBAQC2Q5eBVfgMeskFbzLdyUKwLTVD2ziPQDiU
+5JaEhWmzz+h+PDC2rjnzEPqZ16LtdfiQNtqbkqM1LCMHLJ1IPpEdViIZgxp7fb/F
+epXh8MH7lIDpVjqlB7z01/DxWK1SBHNU7PrLd1zm/kiJ4pgt5Wt2MqTmY/AsW+Dk
+K+wk49Pp6cLbtvtUOyx7asf+D/F5zNoPhT8N2LYXIsOaJoa/RS/l5zrBITAo535W
+7s3F56/gaSaGpbO0mNOYACbAwUturQO2FSFM34wXQtHsryVSmgMv/at/gDkxkFna
+F2hUyDTuKgQaAVnocy23JaCqD83hyV64ZrqA/9cDuX/+KWQKN5uPAgMBAAGjQjBA
+MB0GA1UdDgQWBBSLP0Gv/GR/O0NfnupewM6nX52VOjAfBgNVHSMEGDAWgBSwjLA0
+RgzFHe54i9GWLKbkD4P1cTANBgkqhkiG9w0BAQsFAAOCAQEAQx6g+zCD55EIuuZB
+vfVKwKMYoql+7wL5pgM8FaXT21HBCeoviqdbtRSUUaJh3A7Am2lMn8OlEF+B2M1g
+N14wNY24HCgXny7nixZJFJpJXr+2ZaS04phszCw6dD+DIiEgUI6aMJZdV9P1U2YN
+BI0n2JgA4EugBWQEF9PhaUQ8Nzf/DgdNHoDUo8RKYUr55TqbnzQfbYApVFajWC9m
+w7WCn04BQyOmhQ4eo50do51SwdEa18n/btV4E21TTxT27Ncpi8Ps0rLfB13bQZzp
+FYIsO1EqZgAqImbjMsCO4yORHdF6eopSoGhMQ9Lm9GHyNRf4XWrWC9j1L/QpYrxQ
+QoXMCw==
+-----END CERTIFICATE-----
+)EOF";
+
+// 2c. The Living Room Client Private Key (Ensure it says RSA PRIVATE KEY)
+const char* client_key = R"EOF(
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC2Q5eBVfgMeskF
+bzLdyUKwLTVD2ziPQDiU5JaEhWmzz+h+PDC2rjnzEPqZ16LtdfiQNtqbkqM1LCMH
+LJ1IPpEdViIZgxp7fb/FepXh8MH7lIDpVjqlB7z01/DxWK1SBHNU7PrLd1zm/kiJ
+4pgt5Wt2MqTmY/AsW+DkK+wk49Pp6cLbtvtUOyx7asf+D/F5zNoPhT8N2LYXIsOa
+Joa/RS/l5zrBITAo535W7s3F56/gaSaGpbO0mNOYACbAwUturQO2FSFM34wXQtHs
+ryVSmgMv/at/gDkxkFnaF2hUyDTuKgQaAVnocy23JaCqD83hyV64ZrqA/9cDuX/+
+KWQKN5uPAgMBAAECggEAFqf3RMX9c/utUkYc0hHq/sBX3yv4b2IhxmxVw3pcBdSB
+x3NO8N5eaLcDF62E3LSt5atT6EPFkt3+Kq2ijXDtk/J5gadY2uHqPS98Qx4s1suC
+bL7hwlLga6UOF8oYnVndRkDA+hrHyxTvymgG16mtfn9UHSluGO2A2owVKg7B8FD+
+wsPFc7PjkoeapUFOPnVu3OCT1dKyDtBrStlPh3Jl4gWsdeFfO8FovlGBvu58fKgo
+vfPGXsW87PfdiKILZ0pR5HSEMKaRVkRC+TU6bswyFx01pPnHOGfuBFIyRNs7yC4B
+8x55auCcClfXFU2uLMKlowgwV5bsFWOCgV/Vmx/bMQKBgQD4lMjf118ihni4SGSt
+oQM1r1upWQr8F5sPM4Tpq+x4byv2TkSfyw+H/VICsMm6Q7u4yROdzb3eOx2H1rpx
+5EnSFZdZhI0IOYsidL+f2ejIsJjqqPm4LG2XU+BOG3mA5dhrzcTmmNo1FZw3+prt
+ZnwuoKg2lVfSZErP82ZkrngjHwKBgQC7tCEeSQujb9NeqxCT6IKUw3tIK1oKddwj
+mpqwNHxrl31knCifmn0NGCGvhm029HEMsrJ9ZaJbTCyH/XHVXcX4nTneDqh2K5GX
+Ye6fEOCWvBCfJSLl0v5DPzx5I9gqYUnIJ0R+dKFpShoK7P5EAUkfIjLGO7e9l/NN
+c4E1+bxpkQKBgQD22QkA/6aBanfGyFzx7sp5LUIg0UOPQwG//rEmOowArKVDWkXb
+SJKLwIsIEPbB+TEZNtQ8CGtbm+ifVCShpMmJzdcWFgLXAA2ikb0YyBPZ90RjApm4
+wqWxeKFt7uqhjZ10sEmvlGpb/LG9BSeESBlZVEC2s2cajm2cQ2CS6o5ykQKBgFaC
+faUUq22HM5b1Jq3UwqJHukEX4ebiTTSHo/XEKvf3mQ5OvpZYwHvRfG0Ger2SSaw9
+i/ApcHu9juSaVeWt03lzFWGXxeK4z+BCfZUIVUqDoPGITx43cYKS2Y9HivB1aGj8
+WCAkJuR9B6WzdrjnEslrnJUqntOd/b/blVjIIiNRAoGAJN4SX+LPO4U1qxJgTDng
+SyK201jlCnXH8BsxcY3yP2yPZ0GkxGdsFVPLk1n7NfJE2L+3Llz+/QWu1B3+dyf9
+vqeHj2494J7hJ9KpbP9RLLJHkpe4To8aYgmmbiLh2sxfRI7dRWJyPNo2FJGFDUxB
+WqalEjH6NXWCb2Mq4M/1k94=
+-----END PRIVATE KEY-----
+)EOF";
+
+WiFiClientSecure espClient; 
+PubSubClient client(espClient);
+
+// --- 3. HELPER FUNCTIONS ---
+
+void syncTime() {
+  configTime(0, 0, "pool.ntp.org", "time.google.com");
+  Serial.print("Syncing Clock: ");
+  time_t now = time(nullptr);
+  while (now < 1672531200) { // Wait for year >= 2023
+    delay(500);
+    Serial.print(".");
+    now = time(nullptr);
+  }
+  Serial.println("\n[OK] Time Synced.");
+}
+
+void setup_wifi() {
+  Serial.print("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected");
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Attempting STRICT mTLS connection...");
+    if (client.connect(mqtt_client_id)) {
+      Serial.println("CONNECTED SECURELY!");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" - Retrying in 5s...");
+      delay(5000);
+    }
+  }
+}
+
+// --- 4. SETUP AND LOOP ---
+
+void setup() {
+  Serial.begin(115200);
+  setup_wifi();
+  syncTime();
+  
+  // Load the Security Trio
+  espClient.setCACert(root_ca); 
+  espClient.setCertificate(client_cert); 
+  espClient.setPrivateKey(client_key);   
+  
+  // ESP32 v3.0 Handshake fix
+  espClient.setHandshakeTimeout(45); 
+
+  client.setServer(mqtt_server, 8883); // Secure Port
+  
+  analogReadResolution(12);
+  Serial.println("Living Room Secure Monitor Active.");
+}
+
+void loop() {
+  if (!client.connected()) reconnect();
+  client.loop();
+
+  int rawValue = analogRead(pressurePin);
+  int currentPressure = map(rawValue, 0, 4095, 0, 5000);
+
+  if (abs(currentPressure - lastPressure) >= threshold) {
+    String payload = String(currentPressure);
+    
+    // Fixed: Now uses the variable instead of a hardcoded string
+    if (client.publish(mqtt_publish_topic, payload.c_str())) {
+        Serial.print("Secure Data Sent -> Living Room Pressure: ");
+        Serial.println(payload);
+        lastPressure = currentPressure;
+    } else {
+        Serial.println("Secure Publish Failed!");
+    }
+  }
+  delay(100); 
+}

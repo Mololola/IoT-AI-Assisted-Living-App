@@ -1,9 +1,10 @@
 // FILE: lib/features/routines/presentation/create_routine_dialog.dart
-// Updated to use domain model and controller instead of direct provider access
+// Form for creating an exception (routine) that suppresses Pi alerts
+// during a specific date + time window.
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../domain/routine.dart'; // Changed: import domain model
-import '../data/routine_providers.dart'; // Changed: import providers
+import '../data/routine_providers.dart';
 
 class CreateRoutineDialog extends ConsumerStatefulWidget {
   const CreateRoutineDialog({super.key});
@@ -16,9 +17,12 @@ class CreateRoutineDialog extends ConsumerStatefulWidget {
 class _CreateRoutineDialogState extends ConsumerState<CreateRoutineDialog> {
   final _formKey = GlobalKey<FormState>();
   final _descriptionController = TextEditingController();
-  String _scope = 'daily';
-  DateTime _startTime = DateTime.now();
-  DateTime _endTime = DateTime.now().add(const Duration(hours: 1));
+
+  String _type = 'away_from_home';
+  DateTime _selectedDate = DateTime.now();
+  TimeOfDay _startTime = const TimeOfDay(hour: 10, minute: 0);
+  TimeOfDay _endTime = const TimeOfDay(hour: 22, minute: 0);
+  bool _isSubmitting = false;
 
   @override
   void dispose() {
@@ -26,66 +30,88 @@ class _CreateRoutineDialogState extends ConsumerState<CreateRoutineDialog> {
     super.dispose();
   }
 
-  Future<void> _selectDateTime(BuildContext context, bool isStart) async {
-    final date = await showDatePicker(
+  String _formatDate(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  String _formatTime(TimeOfDay t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  String _displayDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
       context: context,
-      initialDate: isStart ? _startTime : _endTime,
-      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      initialDate: _selectedDate,
+      firstDate: DateTime.now().subtract(const Duration(days: 1)),
       lastDate: DateTime.now().add(const Duration(days: 365)),
     );
+    if (picked != null) setState(() => _selectedDate = picked);
+  }
 
-    if (date != null && context.mounted) {
-      final time = await showTimePicker(
-        context: context,
-        initialTime: TimeOfDay.fromDateTime(isStart ? _startTime : _endTime),
-      );
-
-      if (time != null) {
-        final dateTime = DateTime(
-          date.year,
-          date.month,
-          date.day,
-          time.hour,
-          time.minute,
-        );
-
-        setState(() {
-          if (isStart) {
-            _startTime = dateTime;
-          } else {
-            _endTime = dateTime;
-          }
-        });
-      }
+  Future<void> _pickTime(bool isStart) async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: isStart ? _startTime : _endTime,
+    );
+    if (picked != null) {
+      setState(() {
+        if (isStart) {
+          _startTime = picked;
+        } else {
+          _endTime = picked;
+        }
+      });
     }
   }
 
-  void _submit() {
-    if (_formKey.currentState!.validate()) {
-      if (_endTime.isBefore(_startTime)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('End time must be after start time')),
-        );
-        return;
-      }
+  bool get _isEndBeforeStart {
+    final startMinutes = _startTime.hour * 60 + _startTime.minute;
+    final endMinutes = _endTime.hour * 60 + _endTime.minute;
+    return endMinutes <= startMinutes;
+  }
 
-      // Changed: Create Routine domain model instead of MockRoutine
-      final routine = Routine(
-        id: DateTime.now().millisecondsSinceEpoch,
-        scope: _scope,
-        description: _descriptionController.text.trim(),
-        startTime: _startTime,
-        endTime: _endTime,
-        createdAt: DateTime.now(),
-      );
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
 
-      // Changed: Call controller method instead of direct notifier access
-      ref.read(routineListProvider.notifier).addRoutine(routine);
-
-      Navigator.of(context).pop();
+    if (_isEndBeforeStart) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Routine created successfully')),
+        const SnackBar(content: Text('End time must be after start time')),
       );
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      await ref
+          .read(routineListProvider.notifier)
+          .addRoutine(
+            date: _formatDate(_selectedDate),
+            startTime: _formatTime(_startTime),
+            endTime: _formatTime(_endTime),
+            description: _descriptionController.text.trim(),
+            type: _type,
+          );
+
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Exception created — alerts will be suppressed during this window',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to create exception: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
@@ -103,45 +129,64 @@ class _CreateRoutineDialogState extends ConsumerState<CreateRoutineDialog> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // ── Header ──
                 Row(
                   children: [
-                    Icon(Icons.event_note, color: theme.colorScheme.primary),
+                    Icon(Icons.event_busy, color: theme.colorScheme.primary),
                     const SizedBox(width: 12),
-                    Text(
-                      'Create New Routine',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
+                    Expanded(
+                      child: Text(
+                        'Create Exception',
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ],
                 ),
+                const SizedBox(height: 4),
+                Text(
+                  'Alerts will be suppressed during this time window.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
                 const SizedBox(height: 24),
+
+                // ── Type dropdown ──
                 DropdownButtonFormField<String>(
-                  value: _scope,
+                  value: _type,
                   decoration: const InputDecoration(
-                    labelText: 'Scope',
-                    prefixIcon: Icon(Icons.category),
+                    labelText: 'Reason',
+                    prefixIcon: Icon(Icons.category_outlined),
                     border: OutlineInputBorder(),
                   ),
                   items: const [
-                    DropdownMenuItem(value: 'daily', child: Text('Daily')),
-                    DropdownMenuItem(value: 'weekly', child: Text('Weekly')),
-                    DropdownMenuItem(value: 'monthly', child: Text('Monthly')),
-                    DropdownMenuItem(value: 'custom', child: Text('Custom')),
+                    DropdownMenuItem(
+                      value: 'away_from_home',
+                      child: Text('Away from home'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'visitor',
+                      child: Text('Visitor staying'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'hospital',
+                      child: Text('Hospital visit'),
+                    ),
+                    DropdownMenuItem(value: 'other', child: Text('Other')),
                   ],
-                  onChanged: (value) {
-                    setState(() {
-                      _scope = value!;
-                    });
-                  },
+                  onChanged: (value) => setState(() => _type = value!),
                 ),
                 const SizedBox(height: 16),
+
+                // ── Description ──
                 TextFormField(
                   controller: _descriptionController,
                   decoration: const InputDecoration(
                     labelText: 'Description',
-                    prefixIcon: Icon(Icons.description),
-                    hintText: 'E.g., Turn on living room lights',
+                    prefixIcon: Icon(Icons.description_outlined),
+                    hintText: 'e.g. Birthday party — out all day',
                     border: OutlineInputBorder(),
                   ),
                   maxLines: 2,
@@ -153,20 +198,22 @@ class _CreateRoutineDialogState extends ConsumerState<CreateRoutineDialog> {
                   },
                 ),
                 const SizedBox(height: 16),
+
+                // ── Date picker ──
                 InkWell(
-                  onTap: () => _selectDateTime(context, true),
+                  onTap: _pickDate,
                   borderRadius: BorderRadius.circular(8),
                   child: InputDecorator(
                     decoration: const InputDecoration(
-                      labelText: 'Start Time',
-                      prefixIcon: Icon(Icons.schedule),
+                      labelText: 'Date',
+                      prefixIcon: Icon(Icons.calendar_today_outlined),
                       border: OutlineInputBorder(),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          '${_startTime.year}-${_startTime.month.toString().padLeft(2, '0')}-${_startTime.day.toString().padLeft(2, '0')} ${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}',
+                          _displayDate(_selectedDate),
                           style: theme.textTheme.bodyLarge,
                         ),
                         Icon(
@@ -179,43 +226,100 @@ class _CreateRoutineDialogState extends ConsumerState<CreateRoutineDialog> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                InkWell(
-                  onTap: () => _selectDateTime(context, false),
-                  borderRadius: BorderRadius.circular(8),
-                  child: InputDecorator(
-                    decoration: const InputDecoration(
-                      labelText: 'End Time',
-                      prefixIcon: Icon(Icons.schedule),
-                      border: OutlineInputBorder(),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          '${_endTime.year}-${_endTime.month.toString().padLeft(2, '0')}-${_endTime.day.toString().padLeft(2, '0')} ${_endTime.hour.toString().padLeft(2, '0')}:${_endTime.minute.toString().padLeft(2, '0')}',
-                          style: theme.textTheme.bodyLarge,
+
+                // ── Start / End time row ──
+                Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => _pickTime(true),
+                        borderRadius: BorderRadius.circular(8),
+                        child: InputDecorator(
+                          decoration: const InputDecoration(
+                            labelText: 'Start time',
+                            prefixIcon: Icon(Icons.schedule_outlined),
+                            border: OutlineInputBorder(),
+                          ),
+                          child: Text(
+                            _formatTime(_startTime),
+                            style: theme.textTheme.bodyLarge,
+                          ),
                         ),
-                        Icon(
-                          Icons.edit,
-                          size: 18,
-                          color: theme.colorScheme.primary,
-                        ),
-                      ],
+                      ),
                     ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => _pickTime(false),
+                        borderRadius: BorderRadius.circular(8),
+                        child: InputDecorator(
+                          decoration: InputDecoration(
+                            labelText: 'End time',
+                            prefixIcon: const Icon(Icons.schedule_outlined),
+                            border: const OutlineInputBorder(),
+                            errorText: _isEndBeforeStart
+                                ? 'Must be after start'
+                                : null,
+                          ),
+                          child: Text(
+                            _formatTime(_endTime),
+                            style: theme.textTheme.bodyLarge,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+
+                // ── Info banner ──
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.secondaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        size: 18,
+                        color: theme.colorScheme.onSecondaryContainer,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'The sensor system checks for exceptions every ~15 seconds and suppresses alerts automatically.',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSecondaryContainer,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 24),
+
+                // ── Buttons ──
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
+                      onPressed: _isSubmitting
+                          ? null
+                          : () => Navigator.of(context).pop(),
                       child: const Text('Cancel'),
                     ),
                     const SizedBox(width: 8),
                     FilledButton(
-                      onPressed: _submit,
-                      child: const Text('Create'),
+                      onPressed: _isSubmitting ? null : _submit,
+                      child: _isSubmitting
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Create'),
                     ),
                   ],
                 ),

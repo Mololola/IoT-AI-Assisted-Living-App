@@ -1,16 +1,23 @@
 // FILE: lib/features/routines/data/routine_providers.dart
-// Riverpod providers for routines - connects UI to repository layer
+// Riverpod providers for routines — wired to the real /exceptions backend.
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/config/app_config.dart';
+import '../../sensors/data/sensor_providers.dart'; // for apiClientProvider
 import 'routine_repository.dart';
 import '../domain/routine.dart';
 
-/// Provider for routine repository
-/// To switch to real API: change MockRoutineRepository → RemoteRoutineRepository
+/// Pick Mock or Remote repository based on config flag.
+/// AppConfig.useRemoteBackend is currently true, so RemoteRoutineRepository is used.
 final routineRepositoryProvider = Provider<RoutineRepository>((ref) {
-  return MockRoutineRepository(ref);
+  if (AppConfig.useRemoteBackend) {
+    final apiClient = ref.watch(apiClientProvider);
+    return RemoteRoutineRepository(apiClient);
+  }
+  return MockRoutineRepository();
 });
 
-/// Controller for routine operations - exposes methods to UI
+/// Controller that the UI calls for all routine operations.
 class RoutineController extends StateNotifier<AsyncValue<List<Routine>>> {
   final RoutineRepository _repository;
 
@@ -18,7 +25,6 @@ class RoutineController extends StateNotifier<AsyncValue<List<Routine>>> {
     loadRoutines();
   }
 
-  /// Load all routines from repository
   Future<void> loadRoutines() async {
     state = const AsyncValue.loading();
     try {
@@ -29,19 +35,39 @@ class RoutineController extends StateNotifier<AsyncValue<List<Routine>>> {
     }
   }
 
-  /// Add new routine through repository
-  Future<void> addRoutine(Routine routine) async {
+  Future<void> addRoutine({
+    required String date,
+    required String startTime,
+    required String endTime,
+    required String description,
+    required String type,
+  }) async {
     try {
-      await _repository.addRoutine(routine);
-      // Reload to get updated list
-      await loadRoutines();
+      await _repository.addRoutine(
+        date: date,
+        startTime: startTime,
+        endTime: endTime,
+        description: description,
+        type: type,
+      );
+      await loadRoutines(); // Refresh list after adding
+    } catch (error, stackTrace) {
+      state = AsyncValue.error(error, stackTrace);
+    }
+  }
+
+  /// Deletes the exception from the backend.
+  /// The Pi will resume normal alerting on its next poll (within 15 real seconds).
+  Future<void> deleteRoutine(String id) async {
+    try {
+      await _repository.deleteRoutine(id);
+      await loadRoutines(); // Refresh list after deleting
     } catch (error, stackTrace) {
       state = AsyncValue.error(error, stackTrace);
     }
   }
 }
 
-/// Provider that UI watches for routine list and operations
 final routineListProvider =
     StateNotifierProvider<RoutineController, AsyncValue<List<Routine>>>((ref) {
       final repository = ref.watch(routineRepositoryProvider);

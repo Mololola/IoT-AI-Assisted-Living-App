@@ -1,11 +1,8 @@
 // FILE: lib/features/sensors/domain/sensor.dart
-// Domain model for Sensor — now maps to both:
-//   1. The /sensor-readings/latest backend response (remote)
-//   2. The old mock data format (for fallback)
 
 class Sensor {
   final String id;
-  final String type; // "pressure", "PIR", "presence"
+  final String type;
   final String room;
   final double value;
   final String unit;
@@ -21,31 +18,30 @@ class Sensor {
   });
 
   /// Parse from the backend /sensor-readings response.
-  /// Backend returns:
-  /// {
-  ///   "_id": "...",
-  ///   "sensor_type": "pressure",
-  ///   "topic": "home/bedroom/pressure",
-  ///   "value": 0.45,
-  ///   "timestamp": 1707200000.0,
-  ///   "unit": "bar",
-  ///   "created_at": "2026-02-05T..."
-  /// }
   factory Sensor.fromBackendJson(Map<String, dynamic> json) {
-    final sensorType = json['sensor_type'] as String? ?? 'unknown';
-    final topic = json['topic'] as String? ?? '';
+    final sensorType = (json['sensor_type'] ?? 'unknown').toString();
+    final topic = (json['topic'] ?? '').toString();
+    final sensorId = (json['sensor_id'] ?? '').toString();
+
+    // Derive room from topic if available, otherwise fall back to sensor_id
+    String room = 'Unknown';
+    if (topic.isNotEmpty) {
+      room = _roomFromTopic(topic);
+    } else if (sensorId.isNotEmpty) {
+      room = _roomFromSensorId(sensorId);
+    }
 
     return Sensor(
-      id: json['_id'] as String? ?? '',
+      id: (json['_id'] ?? json['id'] ?? '').toString(),
       type: sensorType,
-      room: _roomFromTopic(topic),
+      room: room,
       value: (json['value'] as num?)?.toDouble() ?? 0.0,
-      unit: json['unit'] as String? ?? _defaultUnit(sensorType),
+      unit: (json['unit'] as String?) ?? _defaultUnit(sensorType),
       lastUpdated: _parseTimestamp(json['timestamp'], json['created_at']),
     );
   }
 
-  /// Original fromJson for local/mock data compatibility
+  /// Original fromJson for mock data compatibility
   factory Sensor.fromJson(Map<String, dynamic> json) {
     return Sensor(
       id: json['id'] as String,
@@ -68,8 +64,9 @@ class Sensor {
     };
   }
 
-  /// Extract room name from MQTT topic.
-  /// "home/bedroom/pressure" → "Bedroom"
+  // ── Static helpers ──────────────────────────────────────────
+
+  /// Extract room from MQTT topic: "home/bedroom/pressure" → "Bedroom"
   static String _roomFromTopic(String topic) {
     final parts = topic.split('/');
     if (parts.length >= 2) {
@@ -79,25 +76,37 @@ class Sensor {
     return 'Unknown';
   }
 
-  /// Default unit based on sensor type
+  /// Fallback: extract room from sensor_id: "bedroom_pressure_01" → "Bedroom"
+  static String _roomFromSensorId(String sensorId) {
+    final parts = sensorId.split('_');
+    if (parts.isNotEmpty && parts[0].isNotEmpty) {
+      final room = parts[0];
+      return room[0].toUpperCase() + room.substring(1);
+    }
+    return 'Unknown';
+  }
+
+  /// Default unit per sensor type
   static String _defaultUnit(String sensorType) {
     switch (sensorType.toLowerCase()) {
       case 'pressure':
-        return 'bar';
+        return '';
       case 'pir':
-        return ''; // boolean-like (0 or 1)
+        return '';
       case 'presence':
         return 'cm';
       case 'temperature':
         return '°C';
       case 'humidity':
         return '%';
+      case 'sink':
+        return '';
       default:
         return '';
     }
   }
 
-  /// Parse timestamp from either Unix float or ISO string
+  /// Parse timestamp from Unix float or ISO string
   static DateTime _parseTimestamp(dynamic unixTs, dynamic isoString) {
     if (unixTs != null && unixTs is num) {
       return DateTime.fromMillisecondsSinceEpoch(
@@ -106,12 +115,14 @@ class Sensor {
       ).toLocal();
     }
     if (isoString != null && isoString is String) {
-      return DateTime.parse(isoString).toLocal();
+      return DateTime.tryParse(isoString)?.toLocal() ?? DateTime.now();
     }
     return DateTime.now();
   }
 
-  /// Friendly display name for the sensor type
+  // ── Display helpers ─────────────────────────────────────────
+
+  /// Human-readable sensor name
   String get displayName {
     switch (type.toLowerCase()) {
       case 'pressure':
@@ -120,6 +131,10 @@ class Sensor {
         return 'Motion (PIR)';
       case 'presence':
         return 'Presence (mmWave)';
+      case 'light':
+        return 'Light';
+      case 'sink':
+        return 'Sink Flow';
       case 'temperature':
         return 'Temperature';
       case 'humidity':
@@ -129,21 +144,31 @@ class Sensor {
     }
   }
 
-  /// Friendly formatted value string
+  /// Human-readable value string
   String get displayValue {
     switch (type.toLowerCase()) {
       case 'pir':
         return value > 0.5 ? 'Motion detected' : 'No motion';
       case 'pressure':
-        return value > 0.3
-            ? 'Occupied (${value.toStringAsFixed(2)} $unit)'
-            : 'Empty (${value.toStringAsFixed(2)} $unit)';
+        return value > 500
+            ? 'Occupied (${value.toStringAsFixed(0)})'
+            : 'Empty (${value.toStringAsFixed(0)})';
       case 'presence':
         return value > 0
-            ? 'Detected at ${value.toStringAsFixed(0)} $unit'
+            ? 'Detected at ${value.toStringAsFixed(0)} cm'
             : 'Not detected';
+      case 'light':
+        return value > 0.5 ? 'Day' : 'Night';
+      case 'sink':
+        return value > 0 ? 'Flowing (${value.toStringAsFixed(1)})' : 'Off';
+      case 'temperature':
+        return '${value.toStringAsFixed(1)} °C';
+      case 'humidity':
+        return '${value.toStringAsFixed(1)} %';
       default:
-        return '${value.toStringAsFixed(1)} $unit';
+        return unit.isNotEmpty
+            ? '${value.toStringAsFixed(1)} $unit'
+            : value.toStringAsFixed(1);
     }
   }
 }

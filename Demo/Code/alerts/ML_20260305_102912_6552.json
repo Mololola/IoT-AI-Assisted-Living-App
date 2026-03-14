@@ -1,0 +1,31 @@
+{
+  "alert_id": "ML_20260305_102912_6552",
+  "timestamp": "2026-03-05T10:29:12.886945",
+  "rule_type": "ML_GENERAL_ANOMALY",
+  "severity": "MEDIUM",
+  "message": "ML: Unusual pattern detected (score: -0.732)",
+  "recommended_action": "Review sensor data",
+  "source": "ML_ENGINE",
+  "anomaly_score": -0.7318,
+  "sensor_data": {
+    "bed_pressure": 0.0,
+    "presence_cm": 256.0,
+    "pir_state": "OUT",
+    "light_state": "NIGHT",
+    "simulated_time": "22:18",
+    "feature_summary": {
+      "hour_normalized": 0.9244,
+      "is_sleep_time": 1.0,
+      "bed_occupancy_rate": 0.8,
+      "bed_pressure_mean": 0.7722,
+      "bed_pressure_std": 0.387,
+      "presence_near_rate": 0.0,
+      "presence_mean_distance": 0.4523,
+      "presence_std_distance": 0.3653,
+      "pir_in_rate": 0.4333,
+      "light_night_rate": 0.4,
+      "bed_transitions": 0.2,
+      "stillness_score": 0.3887
+    }
+  }
+}

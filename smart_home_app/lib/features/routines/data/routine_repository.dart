@@ -1,62 +1,108 @@
 // FILE: lib/features/routines/data/routine_repository.dart
-// Repository pattern for routines - abstraction layer for routine operations
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../domain/routine.dart';
+// Repository for routines — backed by the /exceptions API endpoint.
+// Creating a routine tells the Pi to suppress alerts in that time window.
+// Deleting a routine resumes normal alerting on the next Pi poll (≤15s).
 
-/// Abstract repository interface for routines
-/// Defines operations: read all routines, add new routine
+import '../domain/routine.dart';
+import '../../../core/data/api_client.dart';
+
 abstract class RoutineRepository {
   Future<List<Routine>> getRoutines();
-  Future<void> addRoutine(Routine routine);
+  Future<void> addRoutine({
+    required String date,
+    required String startTime,
+    required String endTime,
+    required String description,
+    required String type,
+  });
+  Future<void> deleteRoutine(String id);
 }
 
-/// Mock implementation using StateNotifier for in-memory storage
-/// In production, RemoteRoutineRepository would call FastAPI backend
-class MockRoutineRepository implements RoutineRepository {
-  final Ref ref;
+// ────────────────────── REMOTE (real backend) ──────────────────────
 
-  MockRoutineRepository(this.ref);
+class RemoteRoutineRepository implements RoutineRepository {
+  final ApiClient _apiClient;
+
+  RemoteRoutineRepository(this._apiClient);
 
   @override
   Future<List<Routine>> getRoutines() async {
-    // In mock mode, routines are stored in a StateNotifier provider
-    return ref.read(_mockRoutinesStateProvider);
+    try {
+      final jsonList = await _apiClient.fetchExceptions();
+      return jsonList.map((json) => Routine.fromJson(json)).toList();
+    } on ApiException catch (e) {
+      if (e.isNotFound) return [];
+      rethrow;
+    }
   }
 
   @override
-  Future<void> addRoutine(Routine routine) async {
-    // Simulate API call delay
+  Future<void> addRoutine({
+    required String date,
+    required String startTime,
+    required String endTime,
+    required String description,
+    required String type,
+  }) async {
+    await _apiClient.createException(
+      date: date,
+      startTime: startTime,
+      endTime: endTime,
+      description: description,
+      type: type,
+    );
+  }
+
+  @override
+  Future<void> deleteRoutine(String id) async {
+    await _apiClient.deleteException(id);
+  }
+}
+
+// ────────────────────── MOCK (for testing without backend) ──────────────────────
+
+class MockRoutineRepository implements RoutineRepository {
+  final List<Routine> _routines = [
+    Routine(
+      id: 'mock_1',
+      date: '2026-03-15',
+      startTime: '10:00',
+      endTime: '22:00',
+      description: 'Birthday party — resident out all day',
+      type: 'away_from_home',
+    ),
+  ];
+
+  @override
+  Future<List<Routine>> getRoutines() async {
     await Future.delayed(const Duration(milliseconds: 300));
-
-    // Add to in-memory state
-    ref.read(_mockRoutinesStateProvider.notifier).addRoutine(routine);
+    return List.from(_routines);
   }
-}
 
-/// Internal StateNotifier for mock routine storage
-/// This mimics a local cache that would sync with backend in production
-class _MockRoutinesNotifier extends StateNotifier<List<Routine>> {
-  _MockRoutinesNotifier() : super([]) {
-    // Initialize with default routine
-    state = [
+  @override
+  Future<void> addRoutine({
+    required String date,
+    required String startTime,
+    required String endTime,
+    required String description,
+    required String type,
+  }) async {
+    await Future.delayed(const Duration(milliseconds: 300));
+    _routines.add(
       Routine(
-        id: 1,
-        scope: 'daily',
-        description: 'Turn on lights at sunset',
-        startTime: DateTime.now(),
-        endTime: DateTime.now().add(const Duration(hours: 1)),
-        createdAt: DateTime.now().subtract(const Duration(days: 1)),
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        date: date,
+        startTime: startTime,
+        endTime: endTime,
+        description: description,
+        type: type,
       ),
-    ];
+    );
   }
 
-  void addRoutine(Routine routine) {
-    state = [...state, routine];
+  @override
+  Future<void> deleteRoutine(String id) async {
+    await Future.delayed(const Duration(milliseconds: 300));
+    _routines.removeWhere((r) => r.id == id);
   }
 }
-
-/// Private provider for mock storage - only accessed through repository
-final _mockRoutinesStateProvider =
-    StateNotifierProvider<_MockRoutinesNotifier, List<Routine>>((ref) {
-      return _MockRoutinesNotifier();
-    });

@@ -1,0 +1,31 @@
+{
+  "alert_id": "ML_20260305_103120_6680",
+  "timestamp": "2026-03-05T10:31:20.863950",
+  "rule_type": "ML_BED_EMPTY_NIGHT",
+  "severity": "HIGH",
+  "message": "ML: Unusual absence from bed at 10:17 PM",
+  "recommended_action": "Check on resident",
+  "source": "ML_ENGINE",
+  "anomaly_score": -0.7144,
+  "sensor_data": {
+    "bed_pressure": 0.0,
+    "presence_cm": 114.0,
+    "pir_state": "IN",
+    "light_state": "NIGHT",
+    "simulated_time": "22:17",
+    "feature_summary": {
+      "hour_normalized": 0.9238,
+      "is_sleep_time": 1.0,
+      "bed_occupancy_rate": 0.2667,
+      "bed_pressure_mean": 0.2297,
+      "bed_pressure_std": 0.3832,
+      "presence_near_rate": 0.0,
+      "presence_mean_distance": 0.1891,
+      "presence_std_distance": 0.0269,
+      "pir_in_rate": 0.5,
+      "light_night_rate": 0.8,
+      "bed_transitions": 0.2,
+      "stillness_score": 0.357
+    }
+  }
+}

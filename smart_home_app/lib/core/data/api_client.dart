@@ -1,6 +1,7 @@
 // FILE: lib/core/data/api_client.dart
-// HTTP client for communicating with the FastAPI backend on Render.
-// FIXED: Matches the actual backend response format (plain arrays).
+// HTTP client for the FastAPI backend on Render.
+// UPDATED: Added sendActuatorCommand + fetchAllAlerts for analytics.
+// UPDATED: Added createException, fetchExceptions, deleteException for Routines tab.
 
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -15,8 +16,6 @@ class ApiClient {
     : _client = client ?? http.Client(),
       baseUrl = baseUrl ?? AppConfig.apiBaseUrl;
 
-  // ────────────────────── helpers ──────────────────────
-
   Uri _uri(String path, [Map<String, String>? queryParams]) {
     final uri = Uri.parse('$baseUrl$path');
     if (queryParams != null && queryParams.isNotEmpty) {
@@ -27,7 +26,6 @@ class ApiClient {
 
   Map<String, String> get _headers => {'Content-Type': 'application/json'};
 
-  /// Generic GET that returns a parsed JSON (could be Map or List)
   Future<dynamic> _getRaw(
     String path, [
     Map<String, String>? queryParams,
@@ -53,7 +51,6 @@ class ApiClient {
     }
   }
 
-  /// Generic POST request
   Future<dynamic> _post(String path, Map<String, dynamic> body) async {
     try {
       final response = await _client
@@ -70,7 +67,6 @@ class ApiClient {
     }
   }
 
-  /// Generic PUT request
   Future<dynamic> _put(String path, [Map<String, dynamic>? body]) async {
     try {
       final response = await _client
@@ -82,6 +78,24 @@ class ApiClient {
           .timeout(AppConfig.coldStartTimeout);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body);
+      }
+      throw ApiException(response.statusCode, response.body);
+    } catch (e) {
+      if (e is ApiException) rethrow;
+      throw ApiException(0, 'Network error: $e');
+    }
+  }
+
+  Future<dynamic> _delete(String path) async {
+    try {
+      final response = await _client
+          .delete(_uri(path), headers: _headers)
+          .timeout(AppConfig.coldStartTimeout);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        // Some DELETE endpoints return empty body — handle gracefully
+        if (response.body.isEmpty) return null;
         return jsonDecode(response.body);
       }
       throw ApiException(response.statusCode, response.body);
@@ -129,12 +143,20 @@ class ApiClient {
     String? severity,
     bool? acknowledged,
     int limit = 50,
+    String? since,
   }) async {
     final params = <String, String>{'limit': limit.toString()};
     if (severity != null) params['severity'] = severity;
     if (acknowledged != null) params['acknowledged'] = acknowledged.toString();
+    if (since != null) params['since'] = since;
 
     final data = await _getRaw('/alerts', params);
+    return _toListOfMaps(data);
+  }
+
+  /// Fetch ALL alerts (larger limit) for analytics
+  Future<List<Map<String, dynamic>>> fetchAllAlerts({int limit = 500}) async {
+    final data = await _getRaw('/alerts', {'limit': limit.toString()});
     return _toListOfMaps(data);
   }
 
@@ -147,16 +169,24 @@ class ApiClient {
     String alertId, {
     String? acknowledgedBy,
   }) async {
-    // Daniel's endpoint is /alerts/{id}/acknowledge (not /ack)
-    // and it uses the MongoDB _id, not alert_id
     await _put('/alerts/$alertId/acknowledge');
   }
 
   // ────────────────────── Sensor Readings ──────────────────────
 
   Future<List<Map<String, dynamic>>> fetchLatestReadings() async {
-    final data = await _getRaw('/sensor-readings/latest');
-    return _toListOfMaps(data);
+    final data = await _getRaw('/sensor-readings', {'limit': '200'});
+    final all = _toListOfMaps(data);
+
+    // Keep only the most recent reading per sensor_type + topic combination
+    final Map<String, Map<String, dynamic>> latest = {};
+    for (final reading in all) {
+      final key = '${reading['sensor_type']}_${reading['topic']}';
+      if (!latest.containsKey(key)) {
+        latest[key] = reading; // API returns newest first, so first = latest
+      }
+    }
+    return latest.values.toList();
   }
 
   Future<List<Map<String, dynamic>>> fetchSensorReadings({
@@ -182,22 +212,69 @@ class ApiClient {
     }
   }
 
+  // ────────────────────── Exceptions (Routines) ──────────────────────
+  // These map to the Routines tab in the app.
+  // The Pi polls GET /exceptions every 15 real seconds and suppresses
+  // alerts whenever the current simulated time falls inside a window.
+
+  /// POST /exceptions — create a new exception (suppresses alerts in window)
+  Future<String> createException({
+    required String date, // "YYYY-MM-DD"
+    required String startTime, // "HH:MM"
+    required String endTime, // "HH:MM"
+    required String description,
+    String type = 'away_from_home',
+    String createdBy = 'caregiver',
+  }) async {
+    final data = await _post('/exceptions', {
+      'date': date,
+      'start_time': startTime,
+      'end_time': endTime,
+      'type': type,
+      'description': description,
+      'created_by': createdBy,
+      'message': description,
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
+    });
+    return (data is Map ? data['inserted_id'] ?? data['id'] ?? '' : '')
+        .toString();
+  }
+
+  /// GET /exceptions — list all active/future exceptions
+  Future<List<Map<String, dynamic>>> fetchExceptions() async {
+    final data = await _getRaw('/exceptions');
+    return _toListOfMaps(data);
+  }
+
+  /// DELETE /exceptions/{id} — remove an exception (resumes alerting on next Pi poll)
+  Future<void> deleteException(String exceptionId) async {
+    await _delete('/exceptions/$exceptionId');
+  }
+
+  // ────────────────────── Actuator Commands ──────────────────────
+
+  Future<void> sendActuatorCommand({
+    required String topic,
+    required String payload,
+    required String actuatorId,
+  }) async {
+    await _post('/actuators/command', {
+      'topic': topic,
+      'payload': payload,
+      'actuator_id': actuatorId,
+    });
+  }
+
   // ────────────────────── Response Parsing ──────────────────────
 
-  /// Handles both response formats:
-  /// - Plain array: [{...}, {...}]
-  /// - Wrapped: {"items": [{...}, {...}], "count": 2}
   List<Map<String, dynamic>> _toListOfMaps(dynamic data) {
     if (data is List) {
-      // Backend returns a plain JSON array
       return data.cast<Map<String, dynamic>>();
     } else if (data is Map) {
-      // Backend returns {"items": [...]} wrapper
       final items = data['items'];
       if (items is List) {
         return items.cast<Map<String, dynamic>>();
       }
-      // Single object — wrap in list
       return [Map<String, dynamic>.from(data)];
     }
     return [];
@@ -208,7 +285,6 @@ class ApiClient {
   }
 }
 
-/// Custom exception for API errors
 class ApiException implements Exception {
   final int statusCode;
   final String message;

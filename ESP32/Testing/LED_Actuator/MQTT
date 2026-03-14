@@ -1,0 +1,87 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <Adafruit_NeoPixel.h> // Library for running the LED strip 
+
+// WiFi Configuration 
+const char* ssid = "IoT-Lab";            // Your WiFi Network Name
+const char* password = "ELEC423_2526!";      // Your WiFi Password
+const char* mqtt_server = "192.168.1.100";  // WiFi IP address 
+
+#define LED_PIN    27  // ESP32 Pin
+#define NUM_LEDS   10  // Number of LEDs on the strip 
+
+// Objects 
+Adafruit_NeoPixel strip(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+// Functions 
+
+void setup_wifi() { // WiFi connection protocol 
+  delay(10);
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected");
+}
+
+// This function runs whenever a message is received from the RPi
+void callback(char* topic, byte* payload, unsigned int length) {
+  String message;
+  for (int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  message.toUpperCase();
+
+  Serial.println("Message arrived [" + String(topic) + "]: " + message);
+
+  if (message == "ON" || message == "1") {
+    for(int i=0; i<NUM_LEDS; i++) {
+      strip.setPixelColor(i, strip.Color(255, 255, 255)); // White
+    }
+    strip.show();
+    client.publish("home/hallway/led/status", "ON");
+  } 
+  else if (message == "OFF" || message == "0") { // If OFF or 0 is recieved LEDs turn off 
+    strip.clear();
+    strip.show();
+    client.publish("home/hallway/led/status", "OFF");// Sends message to print a status report 
+  }
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    if (client.connect("ESP32_LED_1")) {
+      Serial.println("connected");
+      // Resubscribe to the command topic
+      client.subscribe("home/hallway/led");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      delay(5000);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  
+  strip.begin();
+  strip.setBrightness(100); 
+  strip.show(); // Start OFF
+
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
+}
+
+void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();

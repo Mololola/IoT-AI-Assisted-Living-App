@@ -1,5 +1,6 @@
 // FILE: lib/main.dart
-// Merged: Original app (GoRouter + AppTheme) + Firebase + Notifications
+// REVERTED: Back to simple ProviderScope.
+// Tab navigation now uses a global ValueNotifier (no ProviderContainer needed).
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,7 +17,7 @@ void main() async {
   // Initialize Firebase
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  // Register background message handler (MUST be top-level function)
+  // Register background message handler
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
   // Initialize notification service

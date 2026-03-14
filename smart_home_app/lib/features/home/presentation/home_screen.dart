@@ -1,5 +1,6 @@
 // FILE: lib/features/home/presentation/home_screen.dart
-// Updated: Added Alerts tab between Sensors and Routines
+// FIXED: Listens to navigateToTabNotifier from notification_service.dart
+// so tapping a notification switches to the Alerts tab.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +8,7 @@ import '../../sensors/presentation/sensors_tab.dart';
 import '../../alerts/presentation/alerts_tab.dart';
 import '../../routines/presentation/routines_tab.dart';
 import '../../settings/presentation/settings_tab.dart';
+import '../../../core/services/notification_service.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -18,13 +20,36 @@ class HomeScreen extends ConsumerStatefulWidget {
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   int _currentIndex = 0;
 
-  // Added AlertsTab as index 1 — Routines moves to 2, Settings to 3
   final List<Widget> _tabs = const [
     SensorsTab(),
     AlertsTab(),
     RoutinesTab(),
     SettingsTab(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    // Listen for notification taps that want to switch tabs
+    navigateToTabNotifier.addListener(_onNavigateRequest);
+  }
+
+  @override
+  void dispose() {
+    navigateToTabNotifier.removeListener(_onNavigateRequest);
+    super.dispose();
+  }
+
+  void _onNavigateRequest() {
+    final targetTab = navigateToTabNotifier.value;
+    if (targetTab != null && targetTab != _currentIndex) {
+      setState(() {
+        _currentIndex = targetTab;
+      });
+      // Reset the notifier so it can fire again next time
+      navigateToTabNotifier.value = null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -45,7 +70,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             label: 'Sensors',
           ),
           NavigationDestination(
-            // ← NEW
             icon: Icon(Icons.notifications_outlined),
             selectedIcon: Icon(Icons.notifications),
             label: 'Alerts',

@@ -282,7 +282,7 @@ class _BackendTestScreenState extends ConsumerState<BackendTestScreen> {
   /// Simple GET request for db-check (since ApiClient doesn't expose it directly)
   Future<String> _makeGetRequest(Uri uri) async {
     final response =
-        await (await ref
+        (await ref
                 .read(apiClientProvider)
                 .healthCheck()
                 .timeout(const Duration(seconds: 60)))

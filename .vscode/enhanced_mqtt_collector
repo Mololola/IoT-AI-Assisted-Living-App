@@ -1,0 +1,551 @@
+"""
+Enhanced MQTT Multi-Sensor Data Collector with Simulated Time
+Uses config file for parameters and displays simulated daily time during collection
+"""
+
+import paho.mqtt.client as mqtt
+import json
+import time
+import os
+from datetime import datetime, timedelta
+import numpy as np
+import threading
+from collections import deque
+
+class EnhancedMQTTCollector:
+    """Enhanced collector with simulated time and config integration"""
+    
+    def __init__(self, config_path="config.json"):
+        print("\n" + "="*60)
+        print("  📊 ENHANCED MQTT MULTI-SENSOR DATA COLLECTOR")
+        print("  With Simulated Daily Time Display")
+        print("="*60)
+        
+        # Load configuration
+        self.config = self.load_config(config_path)
+        
+        # Create directories
+        os.makedirs('training_data', exist_ok=True)
+        os.makedirs('models', exist_ok=True)
+        os.makedirs(self.config['backup_settings']['backup_dir'], exist_ok=True)
+        
+        # MQTT Configuration from config file
+        self.mqtt_broker = self.config['mqtt_config']['broker_ip']
+        self.mqtt_port = self.config['mqtt_config']['broker_port']
+        self.topics = self.config['mqtt_config']['topics']
+        
+        # Collection parameters
+        self.duration = 0  # Will be set by user choice
+        self.sample_rate = self.config['ml_parameters']['training']['sample_rate_hz']
+        
+        # Sensor data storage
+        self.sensor_data = {
+            'pressure': {'value': 0, 'unit': 'Bar', 'last_update': None},
+            'motion': {'value': 'OUT', 'last_update': None},
+            'presence': {'value': 999, 'unit': 'cm', 'last_update': None}
+        }
+        
+        # Calibration from config
+        self.calibration = {
+            'pressure': {
+                'empty_max': self.config['sensor_calibration']['pressure']['empty_threshold'],
+                'occupied_min': self.config['sensor_calibration']['pressure']['occupied_threshold']
+            },
+            'presence': {
+                'near': self.config['sensor_calibration']['presence']['near_threshold'],
+                'far': self.config['sensor_calibration']['presence']['far_threshold']
+            }
+        }
+        
+        # Data storage
+        self.data_buffer = []
+        self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Threading
+        self.data_lock = threading.Lock()
+        self.collection_active = False
+        self.start_time = None
+        
+        # Training scenario from config
+        self.training_scenario = self.config['training_simulation']['scenario_script']
+        
+        # MQTT Client
+        # MQTT Client (Fixed for paho-mqtt 2.0)
+        self.client = mqtt.Client(
+            mqtt.CallbackAPIVersion.VERSION1,
+            f"RaspberryPi_Tester_{datetime.now().strftime('%H%M%S')}"
+        )
+        self.client.on_connect = self.on_connect
+        self.client.on_message = self.on_message
+        self.client.on_disconnect = self.on_disconnect
+        
+        print(f"  📁 Session ID: {self.session_id}")
+        print(f"  🌐 MQTT Broker: {self.mqtt_broker}")
+        print(f"  📋 Config loaded: {config_path}")
+        print()
+    
+    def load_config(self, config_path):
+        """Load configuration from JSON file"""
+        try:
+            with open(config_path, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            print(f"⚠️ Config file not found: {config_path}")
+            print("   Using default configuration")
+            # Return minimal default config
+            return {
+                'mqtt_config': {
+                    'broker_ip': '192.168.1.100',
+                    'broker_port': 1883,
+                    'topics': {
+                        'pressure': 'home/bedroom/pressure',
+                        'motion': 'home/bedroom/PIR',
+                        'presence': 'home/bedroom/presence'
+                    }
+                },
+                'sensor_calibration': {
+                    'pressure': {'empty_threshold': 0.1, 'occupied_threshold': 0.5},
+                    'presence': {'near_threshold': 50, 'far_threshold': 200}
+                },
+                'ml_parameters': {
+                    'training': {'sample_rate_hz': 2, 'min_samples_required': 1200}
+                },
+                'training_simulation': {
+                    'time_compression_ratio': 144,
+                    'simulated_start_time': '07:00',
+                    'scenario_script': []
+                },
+                'backup_settings': {'backup_dir': 'model_backups/'},
+                'daily_routine': {'typical_schedule': {}}
+            }
+    
+    def on_connect(self, client, userdata, flags, rc):
+        """Callback for MQTT connection"""
+        if rc == 0:
+            print("✅ Connected to MQTT Broker")
+            # Subscribe to all sensor topics
+            for sensor, topic in self.topics.items():
+                client.subscribe(topic)
+                print(f"  Subscribed to: {topic}")
+        else:
+            print(f"❌ Failed to connect, return code {rc}")
+    
+    def on_disconnect(self, client, userdata, rc):
+        """Callback for MQTT disconnection"""
+        if rc != 0:
+            print(f"Unexpected disconnection from MQTT Broker")
+    
+    def on_message(self, client, userdata, msg):
+        """Process incoming MQTT messages"""
+        try:
+            topic = msg.topic
+            payload = msg.payload.decode('utf-8').strip()
+            
+            with self.data_lock:
+                # Update based on topic
+                if topic == self.topics['pressure']:
+                    self.sensor_data['pressure']['value'] = float(payload)
+                    self.sensor_data['pressure']['last_update'] = datetime.now()
+                    
+                elif topic == self.topics['motion']:
+                    self.sensor_data['motion']['value'] = payload
+                    self.sensor_data['motion']['last_update'] = datetime.now()
+                    
+                elif topic == self.topics['presence']:
+                    self.sensor_data['presence']['value'] = int(payload)
+                    self.sensor_data['presence']['last_update'] = datetime.now()
+                    
+        except Exception as e:
+            print(f"Error processing message from {topic}: {e}")
+    
+    def connect_mqtt(self):
+        """Connect to MQTT broker"""
+        try:
+            print(f"Connecting to MQTT broker at {self.mqtt_broker}...")
+            self.client.connect(self.mqtt_broker, self.mqtt_port, 60)
+            self.client.loop_start()
+            time.sleep(2)  # Give time to connect
+            return True
+        except Exception as e:
+            print(f"❌ Could not connect to MQTT broker: {e}")
+            return False
+    
+    def get_simulated_time(self, elapsed_seconds):
+        """Convert elapsed time to simulated daily time"""
+        # Map collection duration to 24 hours
+        compression_ratio = self.config['training_simulation']['time_compression_ratio']
+        
+        # Start at configured time (default 7:00 AM)
+        start_hour, start_min = map(int, self.config['training_simulation']['simulated_start_time'].split(':'))
+        
+        # Calculate simulated time
+        minutes_per_second = (24 * 60) / self.duration
+        total_simulated_minutes = elapsed_seconds * minutes_per_second
+        
+        # Add to start time
+        simulated_time = datetime.now().replace(hour=start_hour, minute=start_min, second=0)
+        simulated_time += timedelta(minutes=total_simulated_minutes)
+        
+        return simulated_time
+    
+    def get_scenario_guidance(self, simulated_time):
+        """Get guidance from training scenario based on current simulated time"""
+        current_hour = simulated_time.hour
+        current_minutes = simulated_time.hour * 60 + simulated_time.minute
+        
+        # Find matching scenario
+        for i, scenario in enumerate(self.training_scenario):
+            scenario_hour, scenario_min = map(int, scenario['time'].split(':'))
+            scenario_minutes = scenario_hour * 60 + scenario_min
+            
+            # Check if we're at or past this scenario
+            if current_minutes >= scenario_minutes:
+                # Check if there's a next scenario
+                if i < len(self.training_scenario) - 1:
+                    next_hour, next_min = map(int, self.training_scenario[i+1]['time'].split(':'))
+                    next_minutes = next_hour * 60 + next_min
+                    if current_minutes < next_minutes:
+                        return scenario['action']
+                else:
+                    return scenario['action']
+        
+        return "Continue current activity"
+    
+    def process_sensor_states(self):
+        """Process raw sensor values into meaningful states"""
+        with self.data_lock:
+            # Process pressure
+            pressure_val = self.sensor_data['pressure']['value']
+            if pressure_val < self.calibration['pressure']['empty_max']:
+                pressure_state = 'empty'
+            elif pressure_val > self.calibration['pressure']['occupied_min']:
+                pressure_state = 'occupied'
+            else:
+                pressure_state = 'uncertain'
+            
+            # Process PIR motion (already IN/OUT)
+            motion_state = self.sensor_data['motion']['value']
+            
+            # Process mmWave presence
+            distance_val = self.sensor_data['presence']['value']
+            if distance_val < self.calibration['presence']['near']:
+                presence_state = 'near'
+            elif distance_val < self.calibration['presence']['far']:
+                presence_state = 'far'
+            else:
+                presence_state = 'absent'
+            
+            return pressure_state, motion_state, presence_state
+    
+    def determine_room_state(self, pressure_state, motion_state, presence_state, simulated_time):
+        """Determine room state based on sensors and simulated time"""
+        hour = simulated_time.hour
+        
+        # Time-based contexts
+        is_sleep_time = hour >= 22 or hour <= 6
+        is_rest_time = 13 <= hour <= 14
+        
+        # Determine state
+        if pressure_state == 'occupied' and motion_state == 'OUT':
+            if is_sleep_time:
+                return 'sleeping'
+            elif is_rest_time:
+                return 'afternoon_rest'
+            else:
+                return 'resting'
+        elif pressure_state == 'occupied' and motion_state == 'IN':
+            return 'restless_sleep' if is_sleep_time else 'active_in_bed'
+        elif pressure_state == 'empty' and motion_state == 'IN':
+            return 'moving_in_room'
+        elif pressure_state == 'empty' and presence_state == 'near':
+            return 'near_door'
+        elif pressure_state == 'empty' and motion_state == 'OUT' and presence_state == 'absent':
+            return 'room_empty'
+        else:
+            return 'transitioning'
+    
+    def collect_training_data(self):
+        """Main collection loop with simulated time display"""
+        print("\n🎯 Starting data collection with simulated daily routine...")
+        print("-" * 60)
+        print("SIMULATED TIME PROGRESSION:")
+        print(f"  Real {self.duration/60:.0f} minutes = Simulated 24 hours")
+        print(f"  Starting at {self.config['training_simulation']['simulated_start_time']}")
+        print("-" * 60)
+        print("\n📋 TRAINING SCENARIO GUIDANCE:")
+        for scenario in self.training_scenario[:5]:
+            print(f"  {scenario['time']} - {scenario['action']}")
+        print("  ... (follow on-screen guidance)")
+        print("-" * 60)
+        
+        self.collection_active = True
+        self.start_time = time.time()
+        sample_count = 0
+        last_display = time.time()
+        
+        print("\n🎬 Collection starting...\n")
+        
+        while time.time() - self.start_time < self.duration and self.collection_active:
+            elapsed = time.time() - self.start_time
+            
+            # Calculate simulated time
+            simulated_time = self.get_simulated_time(elapsed)
+            
+            # Get current states
+            pressure_state, motion_state, presence_state = self.process_sensor_states()
+            
+            # Get scenario guidance
+            guidance = self.get_scenario_guidance(simulated_time)
+            
+            # Create data point with simulated time
+            with self.data_lock:
+                data_point = {
+                    'timestamp': datetime.now().isoformat(),
+                    'simulated_time': simulated_time.strftime("%H:%M"),
+                    'simulated_hour': simulated_time.hour,
+                    'simulated_minute': simulated_time.minute,
+                    'sample_id': sample_count,
+                    
+                    # Time contexts based on simulated time
+                    'is_night': simulated_time.hour >= 22 or simulated_time.hour <= 6,
+                    'is_sleep_time': simulated_time.hour >= 23 or simulated_time.hour <= 7,
+                    'is_morning': 6 <= simulated_time.hour <= 9,
+                    'is_afternoon': 12 <= simulated_time.hour <= 17,
+                    'is_evening': 18 <= simulated_time.hour <= 22,
+                    
+                    # Raw sensor values
+                    'pressure_bar': self.sensor_data['pressure']['value'],
+                    'motion_pir': motion_state,
+                    'distance_cm': self.sensor_data['presence']['value'],
+                    
+                    # Processed states
+                    'pressure_state': pressure_state,
+                    'motion_state': 'motion' if motion_state == 'IN' else 'no_motion',
+                    'presence_state': presence_state,
+                    
+                    # Room state
+                    'room_state': self.determine_room_state(
+                        pressure_state, motion_state, presence_state, simulated_time
+                    )
+                }
+            
+            self.data_buffer.append(data_point)
+            sample_count += 1
+            
+            # Display progress every 3 seconds
+            if time.time() - last_display >= 3:
+                progress = (elapsed / self.duration) * 100
+                remaining = self.duration - elapsed
+                
+                # Clear previous lines and display update
+                print(f"\n{'='*70}")
+                print(f"📅 SIMULATED TIME: {simulated_time.strftime('%A %H:%M')} "
+                      f"({'Night' if data_point['is_night'] else 'Day'})")
+                print(f"⏱️  Real Progress: {progress:.1f}% | "
+                      f"Elapsed: {elapsed/60:.1f}min | Remaining: {remaining/60:.1f}min")
+                print(f"📋 Guidance: {guidance}")
+                print("-" * 70)
+                print(f"🛏️  Pressure: {pressure_state:10s} ({self.sensor_data['pressure']['value']:.2f} Bar)")
+                print(f"🚶 Motion:   {motion_state:10s}")
+                print(f"📏 Distance: {presence_state:10s} ({self.sensor_data['presence']['value']} cm)")
+                print(f"🏠 Room:     {data_point['room_state']:15s}")
+                print(f"📊 Samples:  {sample_count}")
+                print('='*70)
+                
+                last_display = time.time()
+                
+                # Save checkpoint every minute
+                if sample_count % 120 == 0:
+                    self.save_checkpoint()
+            
+            time.sleep(1.0 / self.sample_rate)
+        
+        self.collection_active = False
+        print(f"\n\n✅ Collection complete! Gathered {sample_count} samples")
+        print(f"   Simulated {simulated_time.strftime('%H:%M')} - Full day captured!")
+        return sample_count
+    
+    def save_checkpoint(self):
+        """Save checkpoint data"""
+        checkpoint_file = f"training_data/checkpoint_{self.session_id}.json"
+        with open(checkpoint_file, 'w') as f:
+            json.dump(self.data_buffer[-120:], f)
+    
+    def save_training_data(self):
+        """Save all collected data with metadata"""
+        filename = f"training_data/mqtt_training_{self.session_id}.json"
+        
+        # Calculate statistics
+        pressure_values = [d['pressure_bar'] for d in self.data_buffer]
+        distance_values = [d['distance_cm'] for d in self.data_buffer]
+        
+        metadata = {
+            'session_id': self.session_id,
+            'collection_date': datetime.now().isoformat(),
+            'duration_seconds': self.duration,
+            'sample_count': len(self.data_buffer),
+            'sample_rate_hz': self.sample_rate,
+            'mqtt_broker': self.mqtt_broker,
+            'config_version': self.config['system_info']['version'],
+            'sensors': {
+                'pressure': {
+                    'model': self.config['sensor_calibration']['pressure']['sensor_model'],
+                    'topic': self.topics['pressure'],
+                    'range': [min(pressure_values), max(pressure_values)]
+                },
+                'motion': {
+                    'model': self.config['sensor_calibration']['motion']['sensor_model'],
+                    'topic': self.topics['motion']
+                },
+                'presence': {
+                    'model': self.config['sensor_calibration']['presence']['sensor_model'],
+                    'topic': self.topics['presence'],
+                    'range': [min(distance_values), max(distance_values)]
+                }
+            },
+            'simulated_time_range': '07:00-07:00 (24h)',
+            'user_profile': self.config['user_profile']
+        }
+        
+        output = {
+            'metadata': metadata,
+            'data': self.data_buffer
+        }
+        
+        with open(filename, 'w') as f:
+            json.dump(output, f, indent=2)
+        
+        print(f"\n💾 Training data saved: {filename}")
+        print(f"   Total samples: {len(self.data_buffer)}")
+        
+        # Also save CSV for analysis
+        csv_filename = f"training_data/mqtt_training_{self.session_id}.csv"
+        with open(csv_filename, 'w') as f:
+            f.write("real_time,simulated_time,pressure_bar,pressure_state,motion,distance_cm,room_state\n")
+            for d in self.data_buffer:
+                f.write(f"{d['timestamp']},{d['simulated_time']},{d['pressure_bar']},"
+                       f"{d['pressure_state']},{d['motion_pir']},{d['distance_cm']},"
+                       f"{d['room_state']}\n")
+        print(f"📊 CSV saved: {csv_filename}")
+        
+        return filename
+    
+    def display_collection_summary(self):
+        """Display summary of collected data"""
+        if not self.data_buffer:
+            return
+        
+        print("\n" + "="*60)
+        print("📈 COLLECTION SUMMARY")
+        print("="*60)
+        
+        # Time coverage
+        print("\n⏰ Simulated Time Coverage:")
+        print(f"   Start: {self.data_buffer[0]['simulated_time']}")
+        print(f"   End:   {self.data_buffer[-1]['simulated_time']}")
+        
+        # Sensor statistics
+        pressure_values = [d['pressure_bar'] for d in self.data_buffer]
+        print(f"\n🛏️ Pressure Sensor:")
+        print(f"   Range: {min(pressure_values):.2f} - {max(pressure_values):.2f} Bar")
+        print(f"   Average: {np.mean(pressure_values):.2f} Bar")
+        
+        # Room states
+        from collections import Counter
+        room_states = Counter(d['room_state'] for d in self.data_buffer)
+        print(f"\n🏠 Room States Captured:")
+        for state, count in room_states.most_common():
+            percentage = (count / len(self.data_buffer)) * 100
+            print(f"   {state:20s}: {count:4d} samples ({percentage:.1f}%)")
+        
+        # Activity periods
+        sleep_samples = sum(1 for d in self.data_buffer if d.get('is_sleep_time', False))
+        day_samples = len(self.data_buffer) - sleep_samples
+        print(f"\n📊 Time Distribution:")
+        print(f"   Day samples:   {day_samples} ({day_samples/len(self.data_buffer)*100:.1f}%)")
+        print(f"   Night samples: {sleep_samples} ({sleep_samples/len(self.data_buffer)*100:.1f}%)")
+    
+    def cleanup(self):
+        """Cleanup MQTT connection"""
+        self.collection_active = False
+        self.client.loop_stop()
+        self.client.disconnect()
+        print("🧹 Cleanup complete")
+
+def main():
+    """Main data collection function"""
+    print("\n" + "="*60)
+    print("  ENHANCED MQTT DATA COLLECTION SYSTEM")
+    print("="*60)
+    
+    # Check for config file
+    if not os.path.exists("config.json"):
+        print("⚠️ config.json not found - using default settings")
+    
+    collector = EnhancedMQTTCollector("config.json")
+    
+    print("\n📋 Collection Options:")
+    print("1. Quick test (3 minutes) - Basic patterns")
+    print("2. Standard (10 minutes) - Full day simulation")
+    print("3. Extended (30 minutes) - Multiple day cycles")
+    print("4. Custom duration")
+    print("5. Update MQTT broker IP")
+    
+    choice = input("\nSelect option (1-5): ")
+    
+    if choice == '1':
+        duration = 3
+    elif choice == '2':
+        duration = 10
+    elif choice == '3':
+        duration = 30
+    elif choice == '4':
+        duration = int(input("Enter duration in minutes: "))
+    elif choice == '5':
+        new_ip = input("Enter new MQTT broker IP: ")
+        collector.mqtt_broker = new_ip
+        print(f"Updated to: {new_ip}")
+        return main()  # Restart with new IP
+    else:
+        print("Invalid choice")
+        return
+    
+    collector.duration = duration * 60
+    
+    try:
+        # Connect to MQTT
+        if not collector.connect_mqtt():
+            print("Failed to connect. Check broker IP and network.")
+            return
+        
+        print(f"\n✅ Ready to collect {duration} minutes of training data")
+        print("   This will simulate a full 24-hour day")
+        input("\nPress Enter to start collection...")
+        
+        # Collect data
+        sample_count = collector.collect_training_data()
+        
+        if sample_count > 0:
+            # Save data
+            collector.save_training_data()
+            
+            # Display summary
+            collector.display_collection_summary()
+            
+            print(f"\n✅ Success! Ready for ML training")
+            print(f"   Next: Run enhanced_mqtt_trainer.py")
+        else:
+            print("No data collected. Check sensors.")
+    
+    except KeyboardInterrupt:
+        print("\n\n⚠️ Collection interrupted")
+        if len(collector.data_buffer) > 0:
+            save = input("Save partial data? (y/n): ")
+            if save.lower() == 'y':
+                collector.save_training_data()
+                collector.display_collection_summary()
+    finally:
+        collector.cleanup()
+
+if __name__ == "__main__":
+    main()

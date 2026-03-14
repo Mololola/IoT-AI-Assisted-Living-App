@@ -1,0 +1,165 @@
+#include <stdlib.h> 
+#include <WiFi.h>       
+#include <PubSubClient.h> 
+#include "esp_wifi.h" // REQUIRED for Power Saving
+
+// --- 1. CONFIGURATION ---
+const char* ssid = "IoT-Lab";            
+const char* password = "ELEC423_2526!";      
+const char* mqtt_server = "192.168.1.101";   
+
+const char* mqtt_client_id = "ESP32_livingroom_presence"; 
+const char* mqtt_publish_topic = "home/livingroom/presence"; 
+
+// --- NEW CONFIGURATION: CHANGE THRESHOLD ---
+// The sensor will ONLY transmit if the distance changes by this amount.
+const float CHANGE_THRESHOLD_CM = 5.0; 
+
+// Variable to remember the last value we sent to the Pi
+float lastPublishedDistance = -999.0; // Start with impossible value to force 1st send
+
+// --- HMMD SERIAL PINS ---
+#define RX1_PIN 18
+#define TX1_PIN 19
+#define HMMD_BAUDRATE 115200 
+
+String hex_to_send = "FDFCFBFA0800120000006400000004030201"; 
+
+HardwareSerial HMMDSerial(1); 
+WiFiClient espClient;         
+PubSubClient client(espClient); 
+
+// --- FUNCTIONS ---
+
+void setup_wifi() {
+    delay(10);
+    Serial.println("Connecting to WiFi...");
+
+    // Power Saving: Enable Modem Sleep 
+    WiFi.setSleep(true); 
+
+    WiFi.begin(ssid, password);
+    
+    // Increased timeout logic slightly for stability
+    int retry_count = 0;
+    while (WiFi.status() != WL_CONNECTED && retry_count < 20) {
+        delay(500);
+        Serial.print(".");
+        retry_count++;
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+       // Power Saving: Lower Transmit Power
+       WiFi.setTxPower(WIFI_POWER_8_5dBm); 
+       Serial.println("\nWiFi connected");
+       Serial.println(WiFi.localIP());
+    } else {
+       Serial.println("\nWiFi Failed to Connect");
+    }
+}
+
+void reconnect() {
+    // Only attempt to reconnect if we actually need to send something?
+    // For now, keep it standard to ensure link is alive.
+    if (!client.connected()) {
+        Serial.print("Attempting MQTT connection...");
+        if (client.connect(mqtt_client_id)) {
+            Serial.println("connected!");
+        } else {
+            Serial.print("failed, rc=");
+            Serial.print(client.state());
+            // Don't delay too long here or we miss sensor data
+            delay(1000); 
+        }
+    }
+}
+
+void sendHexData(String hexString) {
+    int hexStringLength = hexString.length();
+    if (hexStringLength % 2 != 0) return;
+ 
+    int byteCount = hexStringLength / 2;
+    byte hexBytes[byteCount];
+    for (int i = 0; i < hexStringLength; i += 2) {
+        String byteString = hexString.substring(i, i + 2);
+        byte hexByte = (byte)strtoul(byteString.c_str(), NULL, 16);
+        hexBytes[i / 2] = hexByte;
+    }
+    HMMDSerial.write(hexBytes, byteCount); 
+}
+
+void readAndPublishData() {
+    if (HMMDSerial.available() > 0) {
+        String line = HMMDSerial.readStringUntil('\n');
+        line.trim();
+
+        if (line.startsWith("Range ")) {
+            String distanceStr = line.substring(6); 
+            float currentDistance = distanceStr.toFloat();
+            
+            // --- NEW LOGIC: CHANGE DETECTION ---
+            // Calculate difference between Current Reading and Last Sent Reading
+            float diff = abs(currentDistance - lastPublishedDistance);
+
+            // Only enter this block if the change is BIGGER than 5cm
+            if (diff >= CHANGE_THRESHOLD_CM) {
+                
+                if (!client.connected()) reconnect();
+
+                if (client.connected()) {
+                    char payload[10];
+                    dtostrf(currentDistance, 5, 2, payload); 
+                    
+                    client.publish(mqtt_publish_topic, payload);
+                    
+                    Serial.print(">>> CHANGE DETECTED (");
+                    Serial.print(diff);
+                    Serial.print("cm) | Sent: ");
+                    Serial.println(payload);
+
+                    // Update the "Last Sent" memory
+                    lastPublishedDistance = currentDistance;
+                }
+            }
+        }
+    }
+}
+
+// --- SETUP & LOOP ---
+
+void setup() {
+    // Power Saving: Drop CPU Speed to 80MHz
+    setCpuFrequencyMhz(80); 
+
+    Serial.begin(115200); 
+    
+    // Wait for Serial Monitor
+    unsigned long startAttemptTime = millis();
+    while (!Serial && millis() - startAttemptTime < 2000) { delay(100); }
+    
+    setup_wifi(); 
+    client.setServer(mqtt_server, 1883); 
+    
+    HMMDSerial.begin(HMMD_BAUDRATE, SERIAL_8N1, RX1_PIN, TX1_PIN);
+    Serial.println("Sensor Serial Initialized");
+    
+    Serial.println("Sending Config Hex...");
+    sendHexData(hex_to_send);
+    
+    delay(2000); 
+    Serial.println("System Ready: Reporting only on 5cm changes.");
+}
+    
+void loop() {
+    // Note: We removed the client.loop() from the main scope 
+    // to prevent it from pinging constantly if not needed, 
+    // but standard MQTT practice requires it to keep the socket alive.
+    if (client.connected()) {
+        client.loop(); 
+    }
+
+    readAndPublishData();
+    
+    // Power Saving: Small delay for Light Sleep
+    delay(20);
+}
