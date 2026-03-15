@@ -250,12 +250,17 @@ async def create_exception(payload: schemas.ExceptionIn):
 
     return {
         "id": str(e["_id"]),
-        "type": e["type"],
-        "message": e["message"],
-        "source": e.get("source"),
-        "timestamp": e["timestamp"],
-        "created_at": e["created_at"],
+        "date": e.get("date"),
+        "start_time": e.get("start_time"),
+        "end_time": e.get("end_time"),
+        "type": e.get("type"),
+        "description": e.get("description"),
+        "created_by": e.get("created_by"),
+        "message": e.get("message"),
+        "timestamp": e.get("timestamp"),
+        "created_at": e.get("created_at"),
     }
+        
 
 
 @router.get("/exceptions")

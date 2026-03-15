@@ -59,15 +59,22 @@ class AlertOut(BaseModel):
 # -------------------------
 
 class ExceptionIn(BaseModel):
+    date: str
+    start_time: str
+    end_time: str
     type: str
-    message: str
-    source: Optional[str] = None
+    description: Optional[str] = None
+    created_by: Optional[str] = None
+    message: Optional[str] = None
     timestamp: str
 
 
 class ExceptionOut(ExceptionIn):
     id: str
     created_at: datetime
+
+    class Config:
+        from_attributes = True
     
 # -------------------------
 # SENSOR READINGS
