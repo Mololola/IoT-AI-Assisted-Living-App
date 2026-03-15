@@ -70,7 +70,7 @@ class ExceptionIn(BaseModel):
 
 
 class ExceptionOut(ExceptionIn):
-    id: str
+    #id: str
     created_at: datetime
 
     class Config:
@@ -95,11 +95,6 @@ class SensorReadingOut(SensorReadingIn):
 # -------------------------
 # ACTUATORS
 # -------------------------
-
-from pydantic import BaseModel
-from datetime import datetime
-from typing import Optional
-
 
 class ActuatorCommandIn(BaseModel):
     topic: str

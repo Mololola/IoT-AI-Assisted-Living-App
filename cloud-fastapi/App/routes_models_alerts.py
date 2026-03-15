@@ -249,7 +249,7 @@ async def create_exception(payload: schemas.ExceptionIn):
     e = await db["exceptions"].find_one({"_id": res.inserted_id})
 
     return {
-        "id": str(e["_id"]),
+        #"id": str(e["_id"]),
         "date": e.get("date"),
         "start_time": e.get("start_time"),
         "end_time": e.get("end_time"),
