@@ -41,7 +41,7 @@ class AlertController extends StateNotifier<AsyncValue<List<Alert>>> {
   final Ref _ref;
 
   AlertController(this._repository, this._ref)
-      : super(const AsyncValue.loading()) {
+    : super(const AsyncValue.loading()) {
     loadAlerts();
   }
 
@@ -56,14 +56,21 @@ class AlertController extends StateNotifier<AsyncValue<List<Alert>>> {
   }
 
   Future<void> acknowledge(String alertId, {String? by}) async {
+    // Optimistic: remove the alert from local state immediately
+    // so the card disappears without waiting for the network round-trip
+    final current = state.value ?? [];
+    state = AsyncValue.data(current.where((a) => a.id != alertId).toList());
+
     try {
       await _repository.acknowledgeAlert(alertId, by: by);
-      await loadAlerts(); // Refresh list after acknowledging
-      // Also invalidate the badge count
+      // Invalidate badge count and urgent alerts providers
       _ref.invalidate(unacknowledgedAlertCountProvider);
       _ref.invalidate(urgentAlertsProvider);
+      // Full refresh in the background to sync with server
+      await loadAlerts();
     } catch (error, stackTrace) {
-      state = AsyncValue.error(error, stackTrace);
+      // If the API call failed, reload to restore accurate state
+      await loadAlerts();
     }
   }
 }
@@ -71,6 +78,6 @@ class AlertController extends StateNotifier<AsyncValue<List<Alert>>> {
 /// Stateful provider for alert list + actions
 final alertControllerProvider =
     StateNotifierProvider<AlertController, AsyncValue<List<Alert>>>((ref) {
-  final repository = ref.watch(alertRepositoryProvider);
-  return AlertController(repository, ref);
-});
+      final repository = ref.watch(alertRepositoryProvider);
+      return AlertController(repository, ref);
+    });

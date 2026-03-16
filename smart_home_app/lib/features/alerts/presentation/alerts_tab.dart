@@ -25,8 +25,10 @@ class AlertsTab extends ConsumerWidget {
         // Filter to active alerts: unacknowledged OR created in last 24 hours
         final now = DateTime.now();
         final activeAlerts = alerts.where((a) {
-          if (!a.acknowledged) return true;
-          return now.difference(a.timestamp).inHours < 24;
+          // Rule 1: Acknowledged alerts disappear immediately
+          if (a.acknowledged) return false;
+          // Rule 2: Unacknowledged alerts disappear after 3 hours
+          return now.difference(a.timestamp).inHours < 3;
         }).toList();
 
         return Column(
