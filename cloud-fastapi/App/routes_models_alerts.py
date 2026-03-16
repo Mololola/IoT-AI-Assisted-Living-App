@@ -342,7 +342,7 @@ async def delete_sensor_reading(id: str):
 # ACTUATOR COMMANDS
 # -------------------------
 
-@router.put("/actuators/commands/{id}/complete")
+@router.put("/actuators/commands/{id}/acknowledge")
 async def complete_actuator_command(id: str):
     db = mongo.db()
     _id = to_oid(id)
