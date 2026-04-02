@@ -44,38 +44,37 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyAQfhyPLLDxZv_bwOpRq1kSCCjB5xFlYfc',
-    appId: '1:1027212583576:android:7769c1380f2b59eaa426ed',
-    messagingSenderId: '1027212583576',
+    apiKey: 'YOUR_API_KEY_HERE',
+    appId: 'YOUR_APP_ID_HERE',
+    messagingSenderId: 'YOUR_SENDER_ID_HERE',
     projectId: 'assisted-living-iot',
-    storageBucket: 'assisted-living-iot.firebasestorage.app',
+    storageBucket: 'YOUR_STORAGE_BUCKET_HERE',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyDHsy-FW_kyz6gAlwSsfU6BcmRQzvEhJRw',
-    appId: '1:1027212583576:ios:0c91b56d41aef3efa426ed',
-    messagingSenderId: '1027212583576',
+    apiKey: 'YOUR_API_KEY_HERE',
+    appId: 'YOUR_APP_ID_HERE',
+    messagingSenderId: 'YOUR_SENDER_ID_HERE',
     projectId: 'assisted-living-iot',
-    storageBucket: 'assisted-living-iot.firebasestorage.app',
+    storageBucket: 'YOUR_STORAGE_BUCKET_HERE',
     iosBundleId: 'com.example.smartHomeApp',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyDHsy-FW_kyz6gAlwSsfU6BcmRQzvEhJRw',
-    appId: '1:1027212583576:ios:0c91b56d41aef3efa426ed',
-    messagingSenderId: '1027212583576',
+    apiKey: 'YOUR_API_KEY_HERE',
+    appId: 'YOUR_APP_ID_HERE',
+    messagingSenderId: 'YOUR_SENDER_ID_HERE',
     projectId: 'assisted-living-iot',
-    storageBucket: 'assisted-living-iot.firebasestorage.app',
+    storageBucket: 'YOUR_STORAGE_BUCKET_HERE',
     iosBundleId: 'com.example.smartHomeApp',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(
-    apiKey: 'AIzaSyCqLcAkC2cyJIhgcwdqzlIf1sH1ENpMk6o',
-    appId: '1:1027212583576:web:4bf18b59581fbc6da426ed',
-    messagingSenderId: '1027212583576',
+    apiKey: 'YOUR_API_KEY_HERE',
+    appId: 'YOUR_APP_ID_HERE',
+    messagingSenderId: 'YOUR_SENDER_ID_HERE',
     projectId: 'assisted-living-iot',
-    authDomain: 'assisted-living-iot.firebaseapp.com',
-    storageBucket: 'assisted-living-iot.firebasestorage.app',
+    storageBucket: 'YOUR_STORAGE_BUCKET_HERE',
     measurementId: 'G-H26EKK5K99',
   );
 }
